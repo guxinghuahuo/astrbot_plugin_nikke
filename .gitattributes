@@ -1,0 +1,15 @@
+* text=auto
+*.py text eol=lf
+*.mjs text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.github/ export-ignore
+.cache/ export-ignore
+.venv/ export-ignore
+dist/ export-ignore
+tests/ export-ignore
+pyproject.toml export-ignore
+requirements-dev.txt export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore

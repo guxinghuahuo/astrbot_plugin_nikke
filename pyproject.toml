@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [".cache", "nikke/_vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

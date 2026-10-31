@@ -1,0 +1,1 @@
+"""NIKKE RSSHub subscription plugin."""

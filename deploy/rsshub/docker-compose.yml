@@ -1,0 +1,80 @@
+name: nikke-rsshub
+
+services:
+  rsshub:
+    image: ${RSSHUB_IMAGE:-m.daocloud.io/docker.io/diygod/rsshub@sha256:e34292f03edd2e42095cd27094d9b7179f7d89a684313e8f91c3ce73a7de354d}
+    restart: unless-stopped
+    ports:
+      - "${NAS_BIND_IP:-127.0.0.1}:${RSSHUB_PORT:-1200}:1200"
+    env_file:
+      - ./rsshub.env
+    volumes:
+      - ./routes-user:/app/routes-user:ro
+      - ./scripts:/app/nikke-checks:ro
+    environment:
+      NODE_ENV: production
+      USER_ROUTES_PATH: /app/routes-user
+      TZ: Asia/Shanghai
+      CACHE_TYPE: redis
+      CACHE_EXPIRE: "300"
+      REDIS_URL: redis://redis:6379/
+      PLAYWRIGHT_CDP_ENDPOINT: "ws://browserless:3000?token=${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN in .env}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      browserless:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1200/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  browserless:
+    image: ${BROWSERLESS_IMAGE:-m.daocloud.io/ghcr.io/browserless/chromium:latest}
+    restart: unless-stopped
+    environment:
+      TOKEN: "${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN in .env}"
+      TZ: Asia/Shanghai
+    shm_size: "512mb"
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f \"http://localhost:3000/pressure?token=$$TOKEN\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: ${REDIS_IMAGE:-m.daocloud.io/docker.io/library/redis:alpine}
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  redis-data:

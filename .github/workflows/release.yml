@@ -1,0 +1,33 @@
+name: Release
+on:
+  push:
+    tags: ['v[0-9]*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Verify tag matches metadata
+        run: |
+          python - <<'PY'
+          import os
+          from scripts.build_package import metadata_value
+          assert os.environ['GITHUB_REF_NAME'] == metadata_value('version')
+          PY
+      - run: python -m pytest -q --basetemp=.pytest-tmp
+      - run: python -m ruff check .
+      - run: node --test tests/test_blablalink_route.mjs
+      - run: python scripts/build_package.py
+      - name: Publish release and attachments
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.sha256 --title "NIKKE 资讯助手 $GITHUB_REF_NAME" --notes-file docs/release-notes.md --verify-tag
