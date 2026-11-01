@@ -403,6 +403,7 @@ def test_character_query_preserves_full_arguments_and_disabled_child(plugin_clas
         plugin = plugin_class(context(), {})
         await plugin.initialize()
         try:
+            assert plugin.characters.logger is plugin._handle_command.__globals__["logger"]
             plugin.characters.query = AsyncMock(return_value=["技能一", "技能二", "爆裂技能"])
             event = FakeEvent(admin=False)
             await preflight_dispatch(plugin, event, "nikke 技能 拉毗：小红帽 7")

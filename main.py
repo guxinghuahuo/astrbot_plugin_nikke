@@ -68,7 +68,7 @@ class NikkePlugin(Star):
             return
         data_dir = StarTools.get_data_dir("astrbot_plugin_nikke")
         self.characters = CharacterCatalog(
-            data_dir / "characters", proxy=settings.official_image_proxy
+            data_dir / "characters", logger, proxy=settings.official_image_proxy
         )
         store = await asyncio.to_thread(Store, data_dir / "subscriptions.sqlite3")
         client = RSSClient(official_image_proxy=settings.official_image_proxy)
@@ -93,7 +93,7 @@ class NikkePlugin(Star):
             self.service = None
             raise
         logger.info(
-            "[NIKKE] 插件 v1.1.0 已加载，自动推送=%s，检查间隔=%s±%s 秒",
+            "[NIKKE] 插件 v1.1.1 已加载，自动推送=%s，检查间隔=%s±%s 秒",
             settings.enabled,
             settings.interval,
             settings.jitter,

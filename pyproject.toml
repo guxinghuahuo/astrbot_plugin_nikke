@@ -8,4 +8,10 @@ line-length = 100
 extend-exclude = [".cache", "nikke/_vendor"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"logging" = { msg = "插件日志须使用 astrbot.api.logger，或由入口注入该日志器。" }
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["TID251"]

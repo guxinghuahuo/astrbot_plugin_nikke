@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import html
 import json
-import logging
 import re
 import time
 import unicodedata
@@ -23,7 +22,6 @@ LIST_PATH = "character/zh-tw/nikke_list_zh-TW_v2.json"
 TTL = 86400
 MAX_BYTES = 8 * 1024 * 1024
 QUERY_EXTRA = "nikke_character_query"
-logger = logging.getLogger(__name__)
 
 
 class CharacterError(ValueError):
@@ -149,8 +147,9 @@ def validate(path: str, data):
 class CharacterCatalog:
     """Lazy, bounded downloads with a validated disk cache; never sends cookies."""
 
-    def __init__(self, directory: Path, *, proxy="", clock=time.time):
+    def __init__(self, directory: Path, logger, *, proxy="", clock=time.time):
         self.directory = directory
+        self.logger = logger
         self.proxy = image_proxy_url(proxy)
         self.clock = clock
         self.lock = asyncio.Lock()
@@ -227,7 +226,7 @@ class CharacterCatalog:
         try:
             await asyncio.to_thread(self._save, file, saved)
         except OSError:
-            logger.warning("[NIKKE] 角色资料缓存写入失败")
+            self.logger.warning("[NIKKE] 角色资料缓存写入失败")
         return data, now, False
 
     async def query(self, query: str, *, skills=False) -> list[str]:

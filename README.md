@@ -45,7 +45,7 @@ QQ 群内的活动到期提醒、国际服动态中文翻译与视频封面推�
 https://github.com/guxinghuahuo/astrbot_plugin_nikke
 ```
 
-也可从 [v1.1.0 发布页](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.1.0) 下载 `astrbot_plugin_nikke-v1.1.0.zip`，通过插件管理页上传。依赖由 AstrBot 安装。
+也可从 [v1.1.1 发布页](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.1.1) 下载 `astrbot_plugin_nikke-v1.1.1.zip`，通过插件管理页上传。依赖由 AstrBot 安装。
 
 ## 首次使用
 
@@ -85,6 +85,8 @@ https://github.com/guxinghuahuo/astrbot_plugin_nikke
 渲染失败时只返回简短提示；关闭开关后沿用文字回复。名称歧义和参数错误始终用简短文字提示。
 
 ## 升级与数据
+
+v1.1.1 修复角色资料模块的日志规范，统一使用 AstrBot 日志器，无需更改已有配置。
 
 v1.1.0 增加角色、技能查询及可选图片回复，图片开关默认关闭，升级后按需开启。
 内部标识仍为 `astrbot_plugin_nikke`，沿用已有配置和 `data/plugin_data/astrbot_plugin_nikke/` 数据。升级前备份配置和数据，升级后重载插件。

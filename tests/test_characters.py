@@ -1,7 +1,7 @@
 import asyncio
 import copy
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiohttp import web
@@ -105,7 +105,7 @@ def test_public_paths_and_lossless_skill_rendering(reference):
 @pytest.mark.parametrize("query", ["", "x" * 101, "拉毗 0", "拉毗 11", "拉毗 -1"])
 def test_bad_queries_never_fetch(tmp_path, query):
     async def scenario():
-        catalog = CharacterCatalog(tmp_path)
+        catalog = CharacterCatalog(tmp_path, Mock())
         catalog._download = AsyncMock()
         with pytest.raises(CharacterError):
             await catalog.query(query, skills=True)
@@ -123,7 +123,7 @@ def test_levels_and_full_names():
 def test_cache_restart_etag_stale_and_ambiguity(tmp_path, reference):
     async def scenario():
         now = [1000000]
-        catalog = CharacterCatalog(tmp_path, clock=lambda: now[0])
+        catalog = CharacterCatalog(tmp_path, Mock(), clock=lambda: now[0])
         rows, role = reference
         catalog._download = AsyncMock(side_effect=[(rows, '"list"'), (role, '"role"')])
         pages = await catalog.query("拉毗:小红帽 10", skills=True)
@@ -136,7 +136,7 @@ def test_cache_restart_etag_stale_and_ambiguity(tmp_path, reference):
         with pytest.raises(CharacterError, match="未找到"):
             await catalog.query("完全不存在")
         assert catalog._download.await_count == 2
-        restarted = CharacterCatalog(tmp_path, clock=lambda: now[0])
+        restarted = CharacterCatalog(tmp_path, Mock(), clock=lambda: now[0])
         restarted._download = AsyncMock()
         await restarted.query("拉毗：小紅帽")
         restarted._download.assert_not_awaited()
@@ -159,7 +159,7 @@ def test_cache_restart_etag_stale_and_ambiguity(tmp_path, reference):
 
 def test_bad_data_does_not_replace_cache_and_concurrent_queries_share_fetch(tmp_path, reference):
     async def scenario():
-        catalog = CharacterCatalog(tmp_path)
+        catalog = CharacterCatalog(tmp_path, Mock())
         catalog._download = AsyncMock(side_effect=[(reference[0], ""), (reference[1], "")])
         await asyncio.gather(*(catalog.query("拉毗:小红帽") for _ in range(5)))
         assert catalog._download.await_count == 2
@@ -172,6 +172,21 @@ def test_bad_data_does_not_replace_cache_and_concurrent_queries_share_fetch(tmp_
         assert "本地旧缓存" in (await catalog.query("拉毗:小红帽"))[0]
         # Invalid network data never overwrites the last usable source snapshot.
         assert all(json.loads(f.read_text(encoding="utf-8"))["checked"] == 0 for f in files)
+
+    asyncio.run(scenario())
+
+
+def test_cache_write_failure_uses_injected_logger_and_returns_reference(tmp_path, reference):
+    async def scenario():
+        logger = Mock()
+        catalog = CharacterCatalog(tmp_path, logger)
+        catalog._download = AsyncMock(side_effect=[(reference[0], ""), (reference[1], "")])
+        catalog._save = Mock(side_effect=OSError("private cache path"))
+        pages = await catalog.query("拉毗：小红帽", skills=True)
+        assert len(pages) == 3 and "Lv.10" in pages[0]
+        assert logger.warning.call_count == 2
+        logger.warning.assert_called_with("[NIKKE] 角色资料缓存写入失败")
+        assert "private cache path" not in str(logger.mock_calls)
 
     asyncio.run(scenario())
 
@@ -198,7 +213,7 @@ def test_downloader_no_cookies_redirects_and_size_limit(tmp_path, monkeypatch, r
         await site.start()
         url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/"
         monkeypatch.setattr(module, "asset_url", lambda path: url)
-        catalog = CharacterCatalog(tmp_path)
+        catalog = CharacterCatalog(tmp_path, Mock())
         try:
             assert (await catalog._download(LIST_PATH, ""))[1] == '"v1"'
             assert await catalog._download(LIST_PATH, '"v1"') == (None, '"v1"')
