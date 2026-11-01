@@ -4,6 +4,12 @@
     "description": "基础配置",
     "default": {},
     "items": {
+      "character_image_enabled": {
+        "type": "bool",
+        "description": "角色与技能图片回复",
+        "default": false,
+        "hint": "开启后将角色资料和技能合并渲染为图片，过长时自动分页。使用 AstrBot 已配置的文转图（t2i）服务，请先在 AstrBot 全局配置中填写本地 t2i 地址。关闭时发送文字；渲染失败时提示检查服务，不自动刷屏发送长文字。"
+      },
       "enabled": {
         "type": "bool",
         "description": "启用自动推送",
@@ -54,7 +60,7 @@
         "description": "国际服图片代理（可选）",
         "default": "",
         "secret": true,
-        "hint": "仅代理 BlaBlaLink 官方图片和 YouTube 视频缩略图（i.ytimg.com）。留空直连；填写 HTTP/Clash mixed 代理入口，如 http://192.168.0.2:7890，支持 http://用户:密码@地址:端口。使用容器可访问的地址，localhost 指向 AstrBot 自己。RSSHub、bilibili 和日历继续直连。保存后自动生效。"
+        "hint": "代理 BlaBlaLink 官方图片、公开角色资料和 YouTube 视频缩略图（i.ytimg.com）。留空直连；填写 HTTP/Clash mixed 代理入口，如 http://192.168.0.2:7890，支持 http://用户:密码@地址:端口。使用容器可访问的地址，localhost 指向 AstrBot 自己。RSSHub、bilibili 和日历继续直连。保存后自动生效。"
       }
     }
   },
@@ -654,7 +660,7 @@
     "description": "国际服图片代理（可选）",
     "default": "",
     "secret": true,
-    "hint": "仅代理 BlaBlaLink 官方图片。留空直连；填写 HTTP/Clash mixed 代理入口，如 http://192.168.0.2:7890，支持 http://用户:密码@地址:端口。使用容器可访问的地址，localhost 指向 AstrBot 自己。RSSHub、bilibili 和日历继续直连。保存后自动生效。",
+    "hint": "代理 BlaBlaLink 官方图片和公开角色资料。留空直连；填写 HTTP/Clash mixed 代理入口，如 http://192.168.0.2:7890，支持 http://用户:密码@地址:端口。使用容器可访问的地址，localhost 指向 AstrBot 自己。RSSHub、bilibili 和日历继续直连。保存后自动生效。",
     "invisible": true
   }
 }

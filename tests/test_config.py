@@ -30,6 +30,13 @@ def test_schema_defaults_and_subscription():
     assert s.targets == ("test-bot:GroupMessage:123456789",)
 
 
+def test_character_image_reply_is_optional_and_grouped():
+    assert not Settings.from_dict({}).character_image_enabled
+    assert Settings.from_dict({"base": {"character_image_enabled": True}}).character_image_enabled
+    schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
+    assert not schema["base"]["items"]["character_image_enabled"]["default"]
+
+
 def test_group_numbers_resolve_and_deduplicate_legacy_targets():
     cfg = config()
     cfg["subscriptions"][0]["targets"] += [" 123456789 ", 123456789, "123456"]

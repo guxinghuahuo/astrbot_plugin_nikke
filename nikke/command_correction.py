@@ -6,10 +6,11 @@ import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 
+from .characters import QUERY_EXTRA, CharacterError, parse_query
 from .chinese import simplified
 from .config import flatten_config, resolve_targets
 
-ACTIONS = ("帮助", "最新", "活动", "状态", "检查")
+ACTIONS = ("帮助", "最新", "活动", "状态", "检查", "角色", "技能")
 ADMIN_ACTIONS = {"状态", "检查"}
 NAMED_ACTIONS = {"最新", "检查"}
 CORRECTED_COMMAND = "nikke_corrected_command"
@@ -114,7 +115,7 @@ def usage_actions(actions, subscriptions, origin, group, remaining=()):
                 command_lines(action, candidates, remaining[0] if remaining else "").splitlines()[0]
             )
         else:
-            lines.append("/nikke " + action)
+            lines.append("/nikke " + action + (" 角色名" if action in ("角色", "技能") else ""))
     return "\n".join(lines[:3]) or "当前没有可用的子指令。"
 
 
@@ -150,6 +151,13 @@ def evaluate(text, subscriptions, disabled, enabled_actions, origin, group, admi
         return Verdict(
             command="nikke " + action + (" " + " ".join(tokens[2:]) if len(tokens) > 2 else "")
         )
+    if action in ("角色", "技能"):
+        query = " ".join(tokens[2:])
+        try:
+            parse_query(query, skills=action == "技能")
+        except CharacterError as exc:
+            return Verdict(message=str(exc))
+        return Verdict(command="nikke " + action + " " + query)
     if action not in NAMED_ACTIONS:
         if len(tokens) != 2:
             return Verdict(message="此指令不接受额外参数。请使用：\n/nikke " + action)
@@ -279,6 +287,10 @@ class CommandPreflight:
             event.stop_event()
             raise ValueError(verdict.message)
         event.message_str = verdict.command
+        if verdict.command.split()[1] in ("角色", "技能"):
+            # AstrBot str arguments may consume only one token. Preserve the full
+            # validated name plus optional level on this event, not global state.
+            event.set_extra(QUERY_EXTRA, verdict.command.split(" ", 2)[2])
         if verdict.command != raw:
             # No acknowledgement of denied administrator commands or their parameters.
             action = verdict.command.split()[1]

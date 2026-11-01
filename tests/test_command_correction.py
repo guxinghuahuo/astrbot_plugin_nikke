@@ -99,6 +99,15 @@ def test_parameter_errors_unknown_action_and_permissions():
     assert "检查" not in check("nikke 查询 private").message
 
 
+def test_public_character_commands_preserve_names_and_validate_levels():
+    assert check("nikke 角色 拉毗：小紅帽").command == "nikke 角色 拉毗：小紅帽"
+    assert check("nikke 技能 拉毗：小红帽 7").command.endswith("拉毗：小红帽 7")
+    assert check("nikke 技能 产品 08 7").command.endswith("产品 08 7")
+    assert "用法" in check("nikke 角色").message
+    assert "1–10" in check("nikke 技能 拉毗 11").message
+    assert "停用" in check("nikke 技能 拉毗", actions=("角色",)).message
+
+
 def test_suggestions_are_limited_to_three_candidates():
     result = check("nikke 最新", [intl("订阅" + str(i)) for i in range(8)])
     assert sum(line.startswith("/nikke 最新 ") for line in result.message.splitlines()) == 3

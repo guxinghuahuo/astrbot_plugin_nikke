@@ -146,7 +146,11 @@ async def dispatch_command(plugin, text, event, disabled=()):
         if command in disabled or not (text == command or text.startswith(command + " ")):
             continue
         remaining = text[len(command) :].strip()
-        if command in ("nikke 检查", "nikke 最新"):
+        if command in ("nikke 角色", "nikke 技能"):
+            # Native AstrBot str defaults consume one token. Preflight must
+            # preserve the optional level and multi-token names on the event.
+            remaining = remaining.split()[0] if remaining else ""
+        if command in ("nikke 检查", "nikke 最新", "nikke 角色", "nikke 技能"):
             await getattr(plugin, name)(event, remaining)
         else:
             await getattr(plugin, name)(event)
@@ -154,7 +158,7 @@ async def dispatch_command(plugin, text, event, disabled=()):
             break
 
 
-def test_native_group_has_five_children_and_backend_permission_metadata(plugin_class):
+def test_native_group_children_and_backend_permission_metadata(plugin_class):
     entries = command_entries(plugin_class)
     assert set(entries) == {
         "nikke 帮助",
@@ -162,6 +166,8 @@ def test_native_group_has_five_children_and_backend_permission_metadata(plugin_c
         "nikke 活动",
         "nikke 检查",
         "nikke 最新",
+        "nikke 角色",
+        "nikke 技能",
     }
     assert plugin_class.nikke.name == "nikke"
     assert plugin_class.nikke.description
@@ -379,7 +385,7 @@ def test_every_registered_command_requires_admin_and_blocks_llm(plugin_class, co
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("command", ["帮助", "活动", "最新"])
+@pytest.mark.parametrize("command", ["帮助", "活动", "最新", "角色", "技能"])
 def test_public_children_allow_non_admin_and_consume_message(plugin_class, command):
     async def scenario():
         plugin = plugin_class(context(), {})
@@ -388,6 +394,112 @@ def test_public_children_allow_non_admin_and_consume_message(plugin_class, comma
         await dispatch_command(plugin, "nikke " + command, event)
         plugin._handle_command.assert_awaited_once_with(event, command, "")
         assert event.stopped and not event.call_llm
+
+    asyncio.run(scenario())
+
+
+def test_character_query_preserves_full_arguments_and_disabled_child(plugin_class):
+    async def scenario():
+        plugin = plugin_class(context(), {})
+        await plugin.initialize()
+        try:
+            plugin.characters.query = AsyncMock(return_value=["技能一", "技能二", "爆裂技能"])
+            event = FakeEvent(admin=False)
+            await preflight_dispatch(plugin, event, "nikke 技能 拉毗：小红帽 7")
+            plugin.characters.query.assert_awaited_once_with("拉毗：小红帽 7", skills=True)
+            assert event.replies == ["技能一", "技能二", "爆裂技能"]
+            assert event.stopped and not event.call_llm
+            assert event.get_extra("nikke_character_query") is None
+            plugin.characters.query.reset_mock()
+            child = next(
+                c for c in plugin_class.nikke.sub_command_filters if c.command_name == "技能"
+            )
+            child.handler_md.enabled = False
+            event = FakeEvent(admin=False)
+            await preflight_dispatch(plugin, event, "nikke 技能 拉毗：小红帽 7")
+            assert "停用" in event.replies[0]
+            plugin.characters.query.assert_not_awaited()
+        finally:
+            await plugin.terminate()
+        assert plugin.characters is None
+
+    asyncio.run(scenario())
+
+
+def test_character_source_error_is_a_consumed_reply(plugin_class):
+    async def scenario():
+        plugin = plugin_class(context(), {})
+        await plugin.initialize()
+        try:
+            error = plugin._handle_command.__globals__["CharacterError"]
+            plugin.characters.query = AsyncMock(side_effect=error("官方角色资料读取失败"))
+            event = FakeEvent(admin=False)
+            await preflight_dispatch(plugin, event, "nikke 角色 拉毗")
+            assert "官方角色资料读取失败" in event.replies[0]
+            assert event.stopped and not event.call_llm
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("modern", [False, True])
+def test_character_image_switch_renders_combined_card_with_native_t2i(plugin_class, modern):
+    async def scenario():
+        plugin = plugin_class(context(), {"base": {"character_image_enabled": True}})
+        await plugin.initialize()
+        renderer = AsyncMock(return_value="/tmp/character.png")
+
+        async def legacy(tmpl, data, return_url=True, options=None):
+            return await renderer(tmpl, data, return_url=return_url, options=options)
+
+        async def current(tmpl, data, return_url=True, options=None, umo=None):
+            return await renderer(tmpl, data, return_url=return_url, options=options, umo=umo)
+
+        plugin.html_render = current if modern else legacy
+        try:
+            plugin.characters.query = AsyncMock(
+                return_value=[
+                    "【小红帽 · 技能1 Lv.10】\n怒目相视\n攻击力10%",
+                    "【小红帽 · 技能2 Lv.10】\n野兽之牙\n持续10秒",
+                    "【小红帽 · 爆裂技能 Lv.10】\n大红狼\n冷却40秒",
+                ]
+            )
+            event = FakeEvent(admin=False)
+            await preflight_dispatch(plugin, event, "nikke 技能 小红帽")
+            assert event.replies == [("image", "/tmp/character.png")]
+            renderer.assert_awaited_once()
+            call = renderer.await_args
+            assert len(call.args[1]["sections"]) == 3
+            assert call.kwargs["return_url"] is False
+            assert call.kwargs["options"]["type"] == "jpeg"
+            assert call.kwargs["options"]["quality"] == 90
+            if modern:
+                assert call.kwargs["umo"] == event.unified_msg_origin
+            assert event.stopped and not event.call_llm
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("offline"), TimeoutError(), None])
+def test_character_render_failure_does_not_dump_long_text(plugin_class, failure):
+    async def scenario():
+        plugin = plugin_class(context(), {"base": {"character_image_enabled": True}})
+        await plugin.initialize()
+        plugin.html_render = AsyncMock(side_effect=failure, return_value="")
+        try:
+            plugin.characters.query = AsyncMock(
+                return_value=["【小红帽 · 资料】\n" + "攻击力" * 200]
+            )
+            event = FakeEvent(admin=False)
+            await preflight_dispatch(plugin, event, "nikke 角色 小红帽")
+            assert len(event.replies) == 1 and "t2i" in event.replies[0]
+            assert "攻击力" not in event.replies[0]
+            assert event.stopped and not event.call_llm
+        finally:
+            await plugin.terminate()
 
     asyncio.run(scenario())
 
@@ -507,6 +619,9 @@ class FakeEvent:
 
     def plain_result(self, text):
         return text
+
+    def image_result(self, path):
+        return ("image", path)
 
     async def send(self, result):
         assert self.stopped and not self.call_llm  # Before any reply, not just after.

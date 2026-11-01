@@ -6,7 +6,7 @@
 2. 更新 `CHANGELOG.md`、`docs/release-notes.md`、README 安装包名和加载日志版本。
 3. 按 README 执行 Python 测试、Ruff 检查、Node 路由测试和打包。
 4. 提交代码并推送到公开仓库，等待 GitHub Actions 检查通过。
-5. 创建与 metadata 版本一致的标签，例如 `v1.0.0`，推送标签。Release 工作流再次检查并发布安装包及 SHA-256 附件。
+5. 创建与 metadata 版本一致的标签，例如 `v1.1.0`，推送标签。Release 工作流再次检查并发布安装包及 SHA-256 附件。
 
 `dist/` 是本地产物，不纳入新提交。`.gitattributes` 在 GitHub 源码归档中排除历史安装包和开发文件。首次发布到新仓库建议导入整理后的当前源码，避免公开私人开发历史中的旧配置及旧安装包；原 NAS 仓库可继续保留。
 

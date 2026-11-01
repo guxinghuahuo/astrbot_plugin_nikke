@@ -62,7 +62,7 @@ python /AstrBot/data/plugins/astrbot_plugin_nikke/scripts/check_international.py
 
 成功输出包含每种语言的条数和完整图片字节数，脚本不发送群消息。`--skip-images` 只检查 RSS。
 
-RSS 成功但图片失败时，在插件的「国际服图片代理」填写容器可访问的 HTTP/Clash mixed 代理。支持 URL 内账号密码认证；仅官方图片和 YouTube 缩略图使用它，RSSHub、bilibili 和日历直连。可读取已保存配置检查：
+RSS 成功但图片失败时，在插件的「国际服图片代理」填写容器可访问的 HTTP/Clash mixed 代理。支持 URL 内账号密码认证；官方图片、公开角色资料和 YouTube 缩略图使用它，RSSHub、bilibili 和日历直连。可读取已保存配置检查：
 
 ```sh
 python /AstrBot/data/plugins/astrbot_plugin_nikke/scripts/check_international.py --rsshub http://rsshub:1200 --config /AstrBot/data/config/astrbot_plugin_nikke_config.json

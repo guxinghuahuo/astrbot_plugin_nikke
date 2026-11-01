@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 
 from astrbot.api import AstrBotConfig, logger
@@ -8,6 +9,8 @@ from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.agent.tool import ToolSet
 
+from .nikke.character_cards import CARD_OPTIONS, TEMPLATE, build_cards
+from .nikke.characters import QUERY_EXTRA, CharacterCatalog, CharacterError
 from .nikke.chat import TOOL_NAME, build_context, query_window
 from .nikke.classifier import ContentFilter
 from .nikke.command_correction import CORRECTED_COMMAND, CommandPreflight
@@ -27,6 +30,7 @@ class NikkePlugin(Star):
         self.config_error = ""
         self.preview_lock = asyncio.Lock()
         self.command_preflight = None
+        self.characters: CharacterCatalog | None = None
 
     def _bind_command_preflight(self):
         group = type(self).nikke.parent_group
@@ -63,6 +67,9 @@ class NikkePlugin(Star):
             logger.error("[NIKKE] 配置错误：%s", self.config_error)
             return
         data_dir = StarTools.get_data_dir("astrbot_plugin_nikke")
+        self.characters = CharacterCatalog(
+            data_dir / "characters", proxy=settings.official_image_proxy
+        )
         store = await asyncio.to_thread(Store, data_dir / "subscriptions.sqlite3")
         client = RSSClient(official_image_proxy=settings.official_image_proxy)
         content_filter = ContentFilter(self.context, settings, store, logger)
@@ -86,7 +93,7 @@ class NikkePlugin(Star):
             self.service = None
             raise
         logger.info(
-            "[NIKKE] 插件 v1.0.0 已加载，自动推送=%s，检查间隔=%s±%s 秒",
+            "[NIKKE] 插件 v1.1.0 已加载，自动推送=%s，检查间隔=%s±%s 秒",
             settings.enabled,
             settings.interval,
             settings.jitter,
@@ -120,6 +127,7 @@ class NikkePlugin(Star):
             if self.service:
                 await self.service.close()
                 self.service = None
+            self.characters = None
 
     async def _send(self, target: str, text: str, images: list[bytes]):
         logger.info(
@@ -169,6 +177,38 @@ class NikkePlugin(Star):
         # new MessageEventResult would replace the stopped result with CONTINUE.
         await event.send(event.plain_result(text))
         logger.info("[NIKKE] 命令回复成功：会话=%s", event.unified_msg_origin)
+
+    async def _reply_character(self, event: AstrMessageEvent, pages: list[str]):
+        if not self.service.settings.character_image_enabled:
+            for page in pages:
+                await self._reply(event, page)
+            return
+        try:
+            cards = build_cards(pages)
+            kwargs = {"return_url": False, "options": CARD_OPTIONS}
+            # AstrBot 4.10.4 uses the global renderer. Newer releases can also
+            # resolve the t2i endpoint from a session's bound configuration.
+            if "umo" in inspect.signature(self.html_render).parameters:
+                kwargs["umo"] = event.unified_msg_origin
+            images = []
+            for card in cards:
+                path = await asyncio.wait_for(self.html_render(TEMPLATE, card, **kwargs), 45)
+                if not isinstance(path, str) or not path:
+                    raise ValueError("文转图未返回图片")
+                images.append(path)
+        except Exception as exc:
+            logger.warning("[NIKKE] 角色资料图片渲染失败：%s", type(exc).__name__)
+            await self._reply(
+                event,
+                "角色资料图片渲染失败，请检查 AstrBot 配置的本地 t2i 服务。"
+                "关闭插件的“角色与技能图片回复”可查看文字。",
+            )
+            return
+        for path in images:
+            await event.send(event.image_result(path))
+        logger.info(
+            "[NIKKE] 角色图片回复成功：会话=%s，图片=%d", event.unified_msg_origin, len(images)
+        )
 
     def _chat_subscriptions(self, event: AstrMessageEvent):
         if (
@@ -267,6 +307,16 @@ class NikkePlugin(Star):
         """查询国际服官方活动、截止时间与实际剩余时间。"""
         await self._run_command(event, "活动")
 
+    @nikke.command("角色")
+    async def nikke_character(self, event: AstrMessageEvent, name: str = ""):
+        """查询国际服角色基础资料，官方繁中资料转简体，无需登录。"""
+        await self._run_command(event, "角色", name)
+
+    @nikke.command("技能")
+    async def nikke_skill(self, event: AstrMessageEvent, name: str = ""):
+        """查询角色技能，可在名称后指定 1–10 级，默认 10 级。"""
+        await self._run_command(event, "技能", name)
+
     @filter.permission_type(filter.PermissionType.ADMIN)
     @nikke.command("检查")
     async def nikke_check(self, event: AstrMessageEvent, name: str = ""):
@@ -281,6 +331,9 @@ class NikkePlugin(Star):
     async def _run_command(self, event: AstrMessageEvent, action: str = "帮助", name: str = ""):
         event.should_call_llm(False)
         event.stop_event()
+        if action in ("角色", "技能"):
+            name = event.get_extra(QUERY_EXTRA) or name
+            event.set_extra(QUERY_EXTRA, None)
         logger.info(
             "[NIKKE] 收到命令：会话=%s，操作=%s，订阅=%s",
             event.unified_msg_origin,
@@ -319,6 +372,17 @@ class NikkePlugin(Star):
         async with self.preview_lock:
             service = self.service
             if service is None:
+                return
+            if action in ("角色", "技能"):
+                if self.characters is None:
+                    await self._reply(event, "角色资料服务尚未初始化，请重载插件。")
+                    return
+                try:
+                    pages = await self.characters.query(name, skills=action == "技能")
+                except CharacterError as exc:
+                    await self._reply(event, str(exc))
+                    return
+                await self._reply_character(event, pages)
                 return
             if action == "活动":
                 await self._reply(event, await service.calendar.listing())
@@ -375,6 +439,8 @@ class NikkePlugin(Star):
                 event,
                 "/nikke 帮助（所有人）\n/nikke 状态（管理员）\n"
                 "/nikke 活动（所有人，查询国际服活动倒计时）\n"
+                "/nikke 角色 角色名（国际服基础资料，繁中转简体）\n"
+                "/nikke 技能 角色名 [等级1–10]（默认10级，无需登录）\n"
                 "/nikke 检查 订阅名称（管理员，只检查来源）\n"
                 "/nikke 最新 订阅名称（所有人，发送到当前已配置的群）\n"
                 "国服与国际服用法相同，名称须与 WebUI 的订阅名称一致。\n"

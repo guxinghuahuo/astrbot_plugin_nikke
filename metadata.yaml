@@ -1,7 +1,7 @@
 name: astrbot_plugin_nikke
 display_name: NIKKE 资讯助手
-desc: 通过 RSSHub 订阅 bilibili 与 BlaBlaLink 四种语言的国际服官方动态，向 QQ 群推送图文，支持活动提醒、非中文翻译及语义对齐的配图回退。
-version: v1.0.0
+desc: 订阅 bilibili 与 BlaBlaLink 国际服官方动态，支持 QQ 群图文推送、翻译、活动提醒，以及无需登录的国际服角色与技能查询。
+version: v1.1.0
 author: guxinghuahuo
 repo: https://github.com/guxinghuahuo/astrbot_plugin_nikke
 tags:
@@ -9,6 +9,7 @@ tags:
   - RSS
   - 资讯推送
   - 活动提醒
+  - 角色查询
 support_platforms:
   - aiocqhttp
 astrbot_version: ">=4.10.4"

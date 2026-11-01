@@ -20,6 +20,7 @@ GROUP_FIELDS = {
         "send_images",
         "official_image_proxy",
         "qq_platform_id",
+        "character_image_enabled",
     ),
     "ai_filter": (
         "ai_filter_enabled",
@@ -317,6 +318,7 @@ class Settings:
     official_image_proxy: str = field(default="", repr=False)
     image_fallback: ImageFallbackSettings = field(default_factory=ImageFallbackSettings)
     translation: TranslationSettings = field(default_factory=TranslationSettings)
+    character_image_enabled: bool = False
 
     @property
     def default_llm_policy(self) -> bool:
@@ -546,4 +548,5 @@ class Settings:
             image_proxy_url(config.get("official_image_proxy", "")),
             ImageFallbackSettings.from_dict(config.get("image_fallback", {}), base),
             TranslationSettings.from_dict(config.get("translation", {})),
+            bool(config.get("character_image_enabled", False)),
         )
