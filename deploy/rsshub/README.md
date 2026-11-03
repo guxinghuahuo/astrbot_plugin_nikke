@@ -1,5 +1,7 @@
 # RSSHub 部署指南
 
+v1.2.0 起，国际服默认直连官方，无需部署本目录。以下国际服路由仅用于 `rsshub` 兼容模式；bilibili 仍可按本指南部署。
+
 本目录提供独立 Docker Compose 项目 `nikke-rsshub`，包含 RSSHub、Redis 和 Chromium。Redis、Chromium 仅供项目内部使用。RSSHub 镜像固定到支持私有路由的 digest，镜像可通过环境变量替换。
 
 ## 准备配置

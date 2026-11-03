@@ -1,4 +1,4 @@
-"""Read-only AstrBot container probe: RSSHub feeds and complete original images.
+"""Read-only AstrBot container probe: official API / RSSHub feeds and complete original images.
 
 Optionally reads only the configured image proxy; no database, model or QQ send.
 """
@@ -35,16 +35,17 @@ def configured_proxy(config_path: str | None = None, proxy_env: str | None = Non
     return ""
 
 
-async def check(base: str, skip_images: bool, proxy: str = "") -> int:
+async def check(base: str, skip_images: bool, proxy: str = "", source: str = "rsshub") -> int:
     client = RSSClient(official_image_proxy=proxy)
     failed = False
     try:
         for language in OFFICIAL_LANGUAGES:
-            stage = "rss"
+            stage = "official_api" if source == "direct" else "rss"
             result = {"language": language, "image_proxy_enabled": bool(proxy), "messages_sent": 0}
             try:
                 entries = await client.fetch(
-                    base.rstrip("/") + "/nikke-blablalink/official/" + language
+                    "blablalink://official/" + language if source == "direct"
+                    else base.rstrip("/") + "/nikke-blablalink/official/" + language
                 )
                 result["entries"] = len(entries)
                 if not entries:
@@ -78,6 +79,7 @@ async def check(base: str, skip_images: bool, proxy: str = "") -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", choices=("direct", "rsshub"), default="direct")
     parser.add_argument("--rsshub", default="http://localhost:1200")
     parser.add_argument("--skip-images", action="store_true")
     group = parser.add_mutually_exclusive_group()
@@ -89,4 +91,4 @@ if __name__ == "__main__":
         proxy = configured_proxy(args.config, args.proxy_env)
     except ValueError as exc:
         parser.error(str(exc))
-    raise SystemExit(asyncio.run(check(args.rsshub, args.skip_images, proxy)))
+    raise SystemExit(asyncio.run(check(args.rsshub, args.skip_images, proxy, args.source)))

@@ -4,6 +4,7 @@ import random
 import re
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -111,6 +112,9 @@ class Service:
     async def start(self):
         await asyncio.to_thread(self.store.sync, self.settings.subscriptions)
         await self.calendar.plan()
+        self._start_tasks()
+
+    def _start_tasks(self):
         if self.tasks:
             return
         if self.settings.enabled:
@@ -131,6 +135,25 @@ class Service:
             self.tasks.append(
                 asyncio.create_task(self._image_fallback_loop(), name="nikke-image-fallback")
             )
+
+    @asynccontextmanager
+    async def pause(self):
+        """Drain background work before changing targets, then resume even on failure."""
+        try:
+            for task in self.tasks:
+                task.cancel()
+            if self.tasks:
+                await asyncio.gather(*self.tasks, return_exceptions=True)
+            self.tasks.clear()
+            yield
+        finally:
+            self.tasks.clear()
+            self._start_tasks()
+
+    def set_subscriptions(self, subscriptions):
+        # All background tasks are paused and command handlers are serialized here.
+        self.settings = replace(self.settings, subscriptions=subscriptions)
+        self.image_fallback.settings = self.settings
 
     async def _image_fallback_loop(self):
         while True:
@@ -566,7 +589,7 @@ class Service:
             lines.extend(
                 [
                     f"\n{sub.name} / {sub.label} / UID {sub.uid}",
-                    f"目标群 {len(sub.targets)}；已建立基线 {state['initialized']}；"
+                    f"目标会话 {len(sub.targets)}；已建立基线 {state['initialized']}；"
                     f"待投递 {state['pending']}；已过滤投递 {state['filtered']}",
                     f"最近成功获取：{timestamp(state.get('last_success'))}",
                     f"动态存档：{archive['count']} 条；最早 {timestamp(archive['oldest'])}；"

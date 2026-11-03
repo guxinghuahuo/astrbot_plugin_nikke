@@ -5,7 +5,8 @@
     "poll_interval_seconds": 300,
     "poll_jitter_seconds": 60,
     "send_images": true,
-    "official_image_proxy": ""
+    "official_image_proxy": "",
+    "international_direct": true
   },
   "ai_filter": {
     "ai_filter_enabled": false,

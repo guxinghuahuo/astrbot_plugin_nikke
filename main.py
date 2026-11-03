@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+from copy import deepcopy
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -14,7 +15,7 @@ from .nikke.characters import QUERY_EXTRA, CharacterCatalog, CharacterError
 from .nikke.chat import TOOL_NAME, build_context, query_window
 from .nikke.classifier import ContentFilter
 from .nikke.command_correction import CORRECTED_COMMAND, CommandPreflight
-from .nikke.config import Settings, migrate_layout
+from .nikke.config import Settings, migrate_layout, resolve_targets
 from .nikke.feed import FeedError, RSSClient
 from .nikke.image_fallback import ImageMatcher
 from .nikke.service import SEND_TIMEOUT, Service, error_summary, timestamp
@@ -93,7 +94,7 @@ class NikkePlugin(Star):
             self.service = None
             raise
         logger.info(
-            "[NIKKE] 插件 v1.1.1 已加载，自动推送=%s，检查间隔=%s±%s 秒",
+            "[NIKKE] 插件 v1.2.0 已加载，自动推送=%s，检查间隔=%s±%s 秒",
             settings.enabled,
             settings.interval,
             settings.jitter,
@@ -287,7 +288,7 @@ class NikkePlugin(Star):
 
     @filter.command_group("nikke", priority=100)
     async def nikke(self, event: AstrMessageEvent):
-        """NIKKE 动态与活动：帮助、最新、活动所有人可用；状态、检查仅管理员。"""
+        """NIKKE 动态与活动；状态、检查、订阅和退订仅限 AstrBot 管理员。"""
         await self._run_command(event, "帮助")
 
     @nikke.command("帮助")
@@ -323,6 +324,18 @@ class NikkePlugin(Star):
         """检查指定订阅的 RSS、最新时间与原链接；不建立基线或推送动态。"""
         await self._run_command(event, "检查", name)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @nikke.command("订阅")
+    async def nikke_subscribe(self, event: AstrMessageEvent, name: str = ""):
+        """为当前 QQ 群或私聊账号订阅指定来源；省略名称列出来源。"""
+        await self._run_command(event, "订阅", name)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @nikke.command("退订")
+    async def nikke_unsubscribe(self, event: AstrMessageEvent, name: str = ""):
+        """取消当前会话的指定来源订阅，不影响其他群或账号。"""
+        await self._run_command(event, "退订", name)
+
     @nikke.command("最新")
     async def nikke_latest(self, event: AstrMessageEvent, name: str = ""):
         """在订阅目标群发送最新图文；支持 bilibili 和国际服订阅名称。"""
@@ -342,7 +355,7 @@ class NikkePlugin(Star):
         )
         try:
             # Check permission inside the handler so denied commands are consumed too.
-            if action in ("状态", "检查") and not event.is_admin():
+            if action in ("状态", "检查", "订阅", "退订") and not event.is_admin():
                 await self._reply(event, "此命令仅限 AstrBot 管理员使用。")
                 return
             corrected = event.get_extra(CORRECTED_COMMAND)
@@ -372,6 +385,9 @@ class NikkePlugin(Star):
         async with self.preview_lock:
             service = self.service
             if service is None:
+                return
+            if action in ("订阅", "退订"):
+                await self._change_subscription(event, action, name)
                 return
             if action in ("角色", "技能"):
                 if self.characters is None:
@@ -442,8 +458,107 @@ class NikkePlugin(Star):
                 "/nikke 角色 角色名（国际服基础资料，繁中转简体）\n"
                 "/nikke 技能 角色名 [等级1–10]（默认10级，无需登录）\n"
                 "/nikke 检查 订阅名称（管理员，只检查来源）\n"
+                "/nikke 订阅 [订阅名称]（管理员，订阅当前群或私聊账号）\n"
+                "/nikke 退订 [订阅名称]（管理员，退订当前会话）\n"
                 "/nikke 最新 订阅名称（所有人，发送到当前已配置的群）\n"
                 "国服与国际服用法相同，名称须与 WebUI 的订阅名称一致。\n"
                 "国际服示例：/nikke 检查 NIKKE国际服\n"
-                "订阅请在 WebUI 配置；保存后自动重载生效。",
+                "省略订阅/退订名称时先列出来源；来源在 WebUI 配置。",
             )
+
+    async def _change_subscription(self, event: AstrMessageEvent, action: str, name: str):
+        service = self.service
+        origin = event.unified_msg_origin
+        platforms = self._qq_platform_ids()
+        try:
+            target = resolve_targets([origin], "", platforms)[0]
+            if target.split(":", 1)[0] not in platforms:
+                raise ValueError("平台不受支持")
+        except (ValueError, IndexError):
+            await self._reply(event, "请在已启用的 OneBot QQ 群或私聊中使用订阅指令。")
+            return
+        subs = service.settings.subscriptions
+        available = subs if action == "订阅" else tuple(s for s in subs if target in s.targets)
+        if not name:
+            lines = [
+                f"/nikke {action} {s.name}" + ("（已订阅）" if target in s.targets else "")
+                for s in available
+            ]
+            await self._reply(
+                event,
+                "请指定订阅名称：\n" + "\n".join(lines)
+                if lines
+                else (
+                    "没有已启用的来源，请先在 WebUI 添加并启用订阅来源。"
+                    if action == "订阅"
+                    else "当前会话没有已启用的动态订阅。"
+                ),
+            )
+            return
+        sub = next((s for s in subs if s.name == name), None)
+        if sub is None:
+            await self._reply(event, f"未找到已启用的订阅来源。请执行 /nikke {action} 查看名称。")
+            return
+        adding = action == "订阅"
+        if (target in sub.targets) == adding:
+            state = "已订阅" if adding else "尚未订阅"
+            await self._reply(event, f"当前会话{state} {name}，无需修改。")
+            return
+        candidate = deepcopy(dict(self.config))
+        raw = next(
+            item for item in candidate["subscriptions"]
+            if str(item.get("name", "")).strip() == name
+            and item.get(
+                "enabled",
+                item.get("source", item.get("__template_key", "bilibili")) != "blablalink",
+            )
+        )
+        raw["targets"] = list(sub.targets) + [target] if adding else [
+            value for value in sub.targets if value != target
+        ]
+        try:
+            settings = Settings.from_dict(candidate, qq_platform_ids=platforms)
+        except ValueError as exc:
+            await self._reply(event, "无法修改订阅：" + str(exc))
+            return
+        save = getattr(self.config, "save_config", None)
+        if not callable(save):
+            await self._reply(event, "配置保存接口不可用，订阅未修改，请重载插件后重试。")
+            return
+        previous = self.config["subscriptions"]
+
+        def commit():
+            self.config["subscriptions"] = candidate["subscriptions"]
+            try:
+                save()
+                service.store.sync(settings.subscriptions)
+            except Exception:
+                self.config["subscriptions"] = previous
+                save()
+                raise
+
+        async def apply():
+            await asyncio.to_thread(commit)
+            service.set_subscriptions(settings.subscriptions)
+
+        try:
+            async with service.pause():
+                # Do not resume polling while a cancelled worker is still saving/syncing.
+                task = asyncio.create_task(apply())
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    await task
+                    raise
+        except Exception as exc:
+            logger.error("[NIKKE] 保存订阅失败：%s", error_summary(exc))
+            await self._reply(event, "订阅修改失败，请查看日志并重试。")
+            return
+        note = (
+            "首次成功获取只建立基线，不补发旧动态。"
+            if adding
+            else "已取消该来源在当前会话的待发送动态，不影响其他会话。"
+        )
+        if adding and not settings.enabled:
+            note += "\n自动推送总开关当前关闭，请在 WebUI 开启后接收新动态。"
+        await self._reply(event, f"当前会话已{action} {name}。\n{note}")

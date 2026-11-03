@@ -2,9 +2,12 @@
 
 import asyncio
 import importlib.util
+import json
 import logging
 import sys
+import threading
 import types
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -150,7 +153,9 @@ async def dispatch_command(plugin, text, event, disabled=()):
             # Native AstrBot str defaults consume one token. Preflight must
             # preserve the optional level and multi-token names on the event.
             remaining = remaining.split()[0] if remaining else ""
-        if command in ("nikke 检查", "nikke 最新", "nikke 角色", "nikke 技能"):
+        if command in (
+            "nikke 检查", "nikke 最新", "nikke 角色", "nikke 技能", "nikke 订阅", "nikke 退订"
+        ):
             await getattr(plugin, name)(event, remaining)
         else:
             await getattr(plugin, name)(event)
@@ -168,6 +173,8 @@ def test_native_group_children_and_backend_permission_metadata(plugin_class):
         "nikke 最新",
         "nikke 角色",
         "nikke 技能",
+        "nikke 订阅",
+        "nikke 退订",
     }
     assert plugin_class.nikke.name == "nikke"
     assert plugin_class.nikke.description
@@ -178,7 +185,7 @@ def test_native_group_children_and_backend_permission_metadata(plugin_class):
     for command, (name, _) in entries.items():
         assert getattr(plugin_class, name).registration_extras.get("sub_command") is True
         assert getattr(getattr(plugin_class, name), "registered_permission", None) == (
-            "admin" if command in ("nikke 状态", "nikke 检查") else None
+            "admin" if command in ("nikke 状态", "nikke 检查", "nikke 订阅", "nikke 退订") else None
         )
     assert all(getattr(plugin_class, name).__doc__ for name, _ in entries.values())
 
@@ -627,6 +634,350 @@ class FakeEvent:
     async def send(self, result):
         assert self.stopped and not self.call_llm  # Before any reply, not just after.
         self.replies.append(result)
+
+
+class SavedConfig(dict):
+    """Model AstrBotConfig.save_config(), including a persistent backing file."""
+
+    def __init__(self, path, **values):
+        super().__init__(values)
+        self.path = path
+        self.saves = 0
+        self.fail_save = False
+
+    def save_config(self):
+        self.saves += 1
+        if self.fail_save:
+            self.fail_save = False
+            raise OSError("disk unavailable")
+        self.path.write_text(json.dumps(self, ensure_ascii=False), encoding="utf-8")
+
+
+def subscription_config(tmp_path, **overrides):
+    return SavedConfig(
+        tmp_path / "config.json",
+        _layout_version=1,
+        subscriptions=[{"name": "NIKKE官方", "uid": "1", "targets": ["200"]}],
+        **overrides,
+    )
+
+
+@pytest.mark.parametrize("action", ["订阅", "退订"])
+@pytest.mark.parametrize("admin", [True, False])
+def test_chat_subscription_listing_never_mutates_config(plugin_class, tmp_path, action, admin):
+    async def scenario():
+        cfg = subscription_config(tmp_path)
+        plugin = plugin_class(context(), cfg)
+        await plugin.initialize()
+        event = FakeEvent(group="200", admin=admin)
+        try:
+            await preflight_dispatch(plugin, event, "nikke " + action)
+            assert cfg.saves == 0
+            assert cfg["subscriptions"][0]["targets"] == ["200"]
+            if admin:
+                assert f"/nikke {action} NIKKE官方" in event.replies[0]
+            else:
+                assert "管理员" in event.replies[0]
+                assert "NIKKE官方" not in event.replies[0]
+            assert event.stopped and not event.call_llm
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("action", ["订阅", "退订"])
+def test_chat_subscription_denial_and_disabled_handler(plugin_class, tmp_path, action):
+    async def scenario():
+        cfg = subscription_config(tmp_path)
+        plugin = plugin_class(context(), cfg)
+        await plugin.initialize()
+        try:
+            event = FakeEvent(admin=False)
+            await preflight_dispatch(plugin, event, f"nikke {action} NIKKE官方")
+            assert "管理员" in event.replies[0] and not cfg.saves
+            child = next(
+                c for c in plugin.command_preflight.group.sub_command_filters
+                if c.command_name == action
+            )
+            child.handler_md.enabled = False
+            event = FakeEvent()
+            await preflight_dispatch(plugin, event, f"nikke {action} NIKKE官方")
+            assert "已停用" in event.replies[0] and not cfg.saves
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("private", [False, True])
+def test_chat_subscription_persists_and_is_idempotent(plugin_class, tmp_path, private):
+    async def scenario():
+        cfg = subscription_config(tmp_path)
+        plugin = plugin_class(context(), cfg)
+        await plugin.initialize()
+        event = FakeEvent(group="" if private else "100")
+        if private:
+            event.unified_msg_origin = "qq:FriendMessage:100"
+        target = event.unified_msg_origin
+        try:
+            await preflight_dispatch(plugin, event, "nikke 订阅 NIKKE官方")
+            assert "已订阅" in event.replies[-1] and "总开关当前关闭" in event.replies[-1]
+            assert cfg.saves == 1
+            sub = plugin.service.settings.subscriptions[0]
+            assert sub.targets == ("qq:GroupMessage:200", target)
+            saved = json.loads(cfg.path.read_text(encoding="utf-8"))
+            assert saved["subscriptions"][0]["targets"] == list(sub.targets)
+            plugin.service.store.ingest(sub, [], 1000, 300)
+            await preflight_dispatch(plugin, FakeEvent(group="200"), "nikke 订阅 NIKKE官方")
+            assert cfg.saves == 1
+            assert plugin.service.store.status(sub.key)["initialized"] == 2
+            await plugin.terminate()
+            # Simulate a reload using only the persisted config.
+            cfg = SavedConfig(cfg.path, **saved)
+            plugin = plugin_class(context(), cfg)
+            await plugin.initialize()
+            assert plugin.service.settings.subscriptions[0].targets == sub.targets
+            assert plugin.service.store.status(sub.key)["initialized"] == 2
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_unsubscribe_removes_only_current_queue_and_resubscribe_builds_new_baseline(
+    plugin_class, tmp_path
+):
+    async def scenario():
+        from nikke.feed import Entry
+
+        cfg = subscription_config(tmp_path)
+        cfg["subscriptions"][0]["targets"].append("100")
+        plugin = plugin_class(context(), cfg)
+        await plugin.initialize()
+        try:
+            service, event = plugin.service, FakeEvent()
+            sub = service.settings.subscriptions[0]
+            service.store.ingest(sub, [], 1000, 300)
+            entry = Entry("new", "title", "text", "https://example.com", "author", 1100, ())
+            service.store.ingest(sub, [entry], 1200, 300)
+            service.store.defer_images(sub, entry, event.unified_msg_origin, 1200)
+            await preflight_dispatch(plugin, event, "nikke 退订 NIKKE官方")
+            assert "已退订" in event.replies[-1]
+            assert service.settings.subscriptions[0].targets == ("qq:GroupMessage:200",)
+            assert [row["target"] for row in service.store.due(1300)] == ["qq:GroupMessage:200"]
+            assert not service.store.image_jobs(1300)
+            assert service.store.status(sub.key)["initialized"] == 1
+            await preflight_dispatch(plugin, event, "nikke 退订 NIKKE官方")
+            assert cfg.saves == 1 and "尚未订阅" in event.replies[-1]
+            await preflight_dispatch(plugin, event, "nikke 订阅 NIKKE官方")
+            assert cfg.saves == 2
+            sub = service.settings.subscriptions[0]
+            service.store.ingest(sub, [entry], 1400, 300)
+            assert [row["target"] for row in service.store.due(1400)] == ["qq:GroupMessage:200"]
+            assert service.store.status(sub.key)["initialized"] == 2
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["save", "sync"])
+def test_chat_subscription_failure_restores_config_and_runtime(
+    plugin_class, tmp_path, monkeypatch, failure
+):
+    async def scenario():
+        cfg = subscription_config(tmp_path)
+        cfg.save_config()
+        plugin = plugin_class(context(), cfg)
+        await plugin.initialize()
+        try:
+            if failure == "save":
+                cfg.fail_save = True
+            else:
+                def fail_sync(subs):
+                    raise OSError("database unavailable")
+
+                monkeypatch.setattr(plugin.service.store, "sync", fail_sync)
+            event = FakeEvent()
+            await preflight_dispatch(plugin, event, "nikke 订阅 NIKKE官方")
+            assert "修改失败" in event.replies[-1]
+            assert cfg["subscriptions"][0]["targets"] == ["200"]
+            persisted = json.loads(cfg.path.read_text(encoding="utf-8"))
+            assert persisted["subscriptions"] == cfg["subscriptions"]
+            assert plugin.service.settings.subscriptions[0].targets == ("qq:GroupMessage:200",)
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("query", ["NIKKE官放", "不存在", "NIKKE官方 300"])
+def test_subscription_mutation_requires_exact_name_and_no_target_argument(
+    plugin_class, tmp_path, query
+):
+    async def scenario():
+        cfg = subscription_config(tmp_path)
+        plugin = plugin_class(context(), cfg)
+        await plugin.initialize()
+        try:
+            event = FakeEvent()
+            await preflight_dispatch(plugin, event, "nikke 订阅 " + query)
+            assert event.replies and not cfg.saves
+            assert plugin.service.settings.subscriptions[0].targets == ("qq:GroupMessage:200",)
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_subscription_conflict_and_bot_account_scope(plugin_class, tmp_path):
+    async def scenario():
+        cfg = subscription_config(tmp_path)
+        cfg["subscriptions"] += [
+            {"name": "英文", "source": "blablalink", "language": "en", "enabled": True,
+             "targets": ["qq:GroupMessage:100"]},
+            {"name": "日文", "source": "blablalink", "language": "ja", "enabled": True,
+             "targets": []},
+        ]
+        ctx = context()
+        ctx.get_config = lambda: {"platform": [
+            {"id": "qq", "type": "aiocqhttp", "enable": True},
+            {"id": "qq2", "type": "aiocqhttp", "enable": True},
+        ]}
+        cfg["base"] = {"qq_platform_id": "qq"}
+        plugin = plugin_class(ctx, cfg)
+        await plugin.initialize()
+        try:
+            event = FakeEvent()
+            await preflight_dispatch(plugin, event, "nikke 订阅 日文")
+            assert "语言冲突" in event.replies[-1] and not cfg.saves
+            event.unified_msg_origin = "qq2:GroupMessage:200"
+            await preflight_dispatch(plugin, event, "nikke 订阅 NIKKE官方")
+            assert plugin.service.settings.subscriptions[0].targets == (
+                "qq:GroupMessage:200", "qq2:GroupMessage:200"
+            )
+            await preflight_dispatch(plugin, event, "nikke 退订 NIKKE官方")
+            assert plugin.service.settings.subscriptions[0].targets == ("qq:GroupMessage:200",)
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_private_subscription_delivers_new_posts_only(plugin_class, tmp_path):
+    async def scenario():
+        from nikke.feed import Entry
+
+        cfg = subscription_config(tmp_path)
+        plugin = plugin_class(context(), cfg)
+        await plugin.initialize()
+        try:
+            event = FakeEvent(group="")
+            event.unified_msg_origin = "qq:FriendMessage:100"
+            await preflight_dispatch(plugin, event, "nikke 订阅 NIKKE官方")
+            service = plugin.service
+            # Drive the real poll/outbox manually, with no network or QQ messages.
+            service.settings = replace(service.settings, enabled=True, send_images=False)
+            now = [1000]
+            service.clock = lambda: now[0]
+            old = Entry("old", "title", "text", "https://example.com/old", "author", 900, ())
+            new = replace(old, id="new", text="new post", published=1500)
+            service.client.fetch = AsyncMock(return_value=[old])
+            service.sender = AsyncMock()
+            await service.poll_once()
+            await service.deliver_once()
+            service.sender.assert_not_awaited()
+            now[0] = 2000
+            service.client.fetch.return_value = [new, old]
+            await service.poll_once()
+            await service.deliver_once()
+            assert {call.args[0] for call in service.sender.await_args_list} == {
+                "qq:GroupMessage:200", event.unified_msg_origin
+            }
+            assert all("new post" in call.args[1] for call in service.sender.await_args_list)
+            assert service.store.status(service.settings.subscriptions[0].key)["pending"] == 0
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_subscription_cancellation_finishes_save_before_resuming_tasks(
+    plugin_class, tmp_path, monkeypatch
+):
+    async def scenario():
+        module = sys.modules[plugin_class.__module__]
+
+        async def idle(self):
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(module.Service, "_poll_loop", idle)
+        monkeypatch.setattr(module.Service, "_send_loop", idle)
+        cfg = subscription_config(tmp_path, base={"enabled": True})
+        plugin = plugin_class(context(), cfg)
+        await plugin.initialize()
+        old_tasks = list(plugin.service.tasks)
+        started, release = threading.Event(), threading.Event()
+        original_save = cfg.save_config
+
+        def slow_save():
+            started.set()
+            assert release.wait(5)
+            original_save()
+
+        cfg.save_config = slow_save
+        task = asyncio.create_task(
+            preflight_dispatch(plugin, FakeEvent(), "nikke 订阅 NIKKE官方")
+        )
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert not plugin.service.tasks
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert all(t.done() for t in old_tasks)
+            assert len(plugin.service.tasks) == 2
+            targets = plugin.service.settings.subscriptions[0].targets
+            assert targets == ("qq:GroupMessage:200", "qq:GroupMessage:100")
+            persisted = json.loads(cfg.path.read_text(encoding="utf-8"))
+            assert persisted["subscriptions"][0]["targets"] == list(targets)
+            rows = plugin.service.store.db.execute("SELECT target FROM relations").fetchall()
+            assert {row[0] for row in rows} == set(targets)
+        finally:
+            release.set()
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_subscription_skips_disabled_duplicate_name_and_rejects_unsupported_platform(
+    plugin_class, tmp_path
+):
+    async def scenario():
+        cfg = subscription_config(tmp_path)
+        disabled = {"name": "NIKKE官方", "uid": "2", "enabled": False, "targets": []}
+        cfg["subscriptions"].insert(0, disabled)
+        plugin = plugin_class(context(), cfg)
+        await plugin.initialize()
+        try:
+            for origin in ("discord:GroupMessage:100", "qq:OtherMessage:100"):
+                event = FakeEvent()
+                event.unified_msg_origin = origin
+                await preflight_dispatch(plugin, event, "nikke 订阅 NIKKE官方")
+                assert "OneBot" in event.replies[-1] and not cfg.saves
+            await preflight_dispatch(plugin, FakeEvent(), "nikke 订阅 NIKKE官方")
+            assert cfg["subscriptions"][0] == disabled
+            assert cfg["subscriptions"][1]["targets"] == [
+                "qq:GroupMessage:200", "qq:GroupMessage:100"
+            ]
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
 
 
 def test_send_validates_platform_and_propagates_failure(plugin_class):

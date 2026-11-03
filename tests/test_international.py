@@ -53,7 +53,7 @@ def test_schema_source_defaults_and_legacy_identity():
     for language in OFFICIAL_LANGUAGES:
         sub = settings(item(language)).subscriptions[0]
         assert sub.language == language and sub.source == "blablalink"
-        assert sub.url.endswith("/nikke-blablalink/official/" + language)
+        assert sub.url == "blablalink://official/" + language
         assert sub.key == replace(sub, simplify=False, url="http://another-rss/route").key
     old = settings({"name": "旧订阅", "uid": "1", "targets": []}).subscriptions[0]
     assert old.source == "bilibili" and old.key == sha256(old.url.encode()).hexdigest()

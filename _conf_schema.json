@@ -20,7 +20,13 @@
         "type": "string",
         "description": "RSSHub 地址",
         "default": "http://localhost:1200",
-        "hint": "容器内 localhost 是 AstrBot 自己；使用 NAS 地址。"
+        "hint": "bilibili 动态使用此地址；关闭国际服直连时，国际服也使用此地址，需部署国际服路由。"
+      },
+      "international_direct": {
+        "type": "bool",
+        "description": "国际服直连官方接口",
+        "default": true,
+        "hint": "默认开启，无需部署 RSSHub；关闭后使用上方 RSSHub 地址获取国际服动态。"
       },
       "poll_interval_seconds": {
         "type": "int",
@@ -60,7 +66,7 @@
         "description": "国际服图片代理（可选）",
         "default": "",
         "secret": true,
-        "hint": "代理 BlaBlaLink 官方图片、公开角色资料和 YouTube 视频缩略图（i.ytimg.com）。留空直连；填写 HTTP/Clash mixed 代理入口，如 http://192.168.0.2:7890，支持 http://用户:密码@地址:端口。使用容器可访问的地址，localhost 指向 AstrBot 自己。RSSHub、bilibili 和日历继续直连。保存后自动生效。"
+        "hint": "大陆地区通常无法直接访问国际服图片。如需获取动态图片，建议配置 HTTP 代理，例如 http://192.168.0.2:7890。"
       }
     }
   },
@@ -91,9 +97,9 @@
           },
           "targets": {
             "type": "list",
-            "description": "目标 QQ 群号",
+            "description": "目标 QQ 群号或会话",
             "default": [],
-            "hint": "每项只填写一个群号，例如 123456789，无需发送 /sid。支持多个群；空列表仅支持检查来源，不会发送动态。兼容旧版完整会话标识。"
+            "hint": "每项填写一个群号，例如 123456789。管理员也可在 QQ 群或私聊中用 /nikke 订阅、退订管理当前会话；聊天添加的完整会话标识请保留。空列表不发送动态。"
           }
         }
       },
@@ -132,9 +138,9 @@
           },
           "targets": {
             "type": "list",
-            "description": "目标 QQ 群号",
+            "description": "目标 QQ 群号或会话",
             "default": [],
-            "hint": "每项填写一个群号，可添加多个群。同一语言只添加一项订阅，在此管理多个群。保存后自动生效。"
+            "hint": "每项填写一个群号。同一语言只添加一项订阅；管理员可用 /nikke 订阅、退订管理当前 QQ 群或私聊账号。聊天添加的完整会话标识请保留。"
           }
         }
       }
@@ -660,7 +666,7 @@
     "description": "国际服图片代理（可选）",
     "default": "",
     "secret": true,
-    "hint": "代理 BlaBlaLink 官方图片和公开角色资料。留空直连；填写 HTTP/Clash mixed 代理入口，如 http://192.168.0.2:7890，支持 http://用户:密码@地址:端口。使用容器可访问的地址，localhost 指向 AstrBot 自己。RSSHub、bilibili 和日历继续直连。保存后自动生效。",
+    "hint": "大陆地区通常无法直接访问国际服图片。如需获取动态图片，建议配置 HTTP 代理，例如 http://192.168.0.2:7890。",
     "invisible": true
   }
 }

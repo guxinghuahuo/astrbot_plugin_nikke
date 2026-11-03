@@ -72,6 +72,19 @@ def test_explicit_platform_for_multiple_accounts():
     )
 
 
+def test_private_subscription_is_distinct_from_same_numbered_group():
+    cfg = {"subscriptions": [
+        {"name": "英文", "source": "blablalink", "enabled": True, "language": "en",
+         "targets": ["qq:GroupMessage:100"]},
+        {"name": "日文", "source": "blablalink", "enabled": True, "language": "ja",
+         "targets": ["qq:FriendMessage:100"]},
+    ]}
+    assert len(Settings.from_dict(cfg).subscriptions) == 2
+    cfg["subscriptions"][0]["targets"] = ["qq:FriendMessage:100"]
+    with pytest.raises(ValueError, match="账号 100 的国际服语言冲突"):
+        Settings.from_dict(cfg)
+
+
 @pytest.mark.parametrize("target", ["0", "-1", "１２３", True, None, 123.5, "abc"])
 def test_invalid_group_number(target):
     cfg = config()
@@ -96,7 +109,7 @@ def test_invalid_group_number(target):
         {"ai_filter_timeout_seconds": "bad"},
         {"subscriptions": [{"name": "x", "uid": "invalid"}]},
         {"subscriptions": [{"name": "x", "uid": "1", "targets": ["123456789"]}]},
-        {"subscriptions": [{"name": "x", "uid": "1", "targets": ["bot:FriendMessage:1"]}]},
+        {"subscriptions": [{"name": "x", "uid": "1", "targets": ["bot:OtherMessage:1"]}]},
         {"subscriptions": [{"name": "x", "uid": "1"}, {"name": "y", "uid": "1"}]},
     ],
 )

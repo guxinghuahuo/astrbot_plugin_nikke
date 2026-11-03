@@ -10,8 +10,8 @@ from .characters import QUERY_EXTRA, CharacterError, parse_query
 from .chinese import simplified
 from .config import flatten_config, resolve_targets
 
-ACTIONS = ("帮助", "最新", "活动", "状态", "检查", "角色", "技能")
-ADMIN_ACTIONS = {"状态", "检查"}
+ACTIONS = ("帮助", "最新", "活动", "状态", "检查", "角色", "技能", "订阅", "退订")
+ADMIN_ACTIONS = {"状态", "检查", "订阅", "退订"}
 NAMED_ACTIONS = {"最新", "检查"}
 CORRECTED_COMMAND = "nikke_corrected_command"
 
@@ -151,6 +151,12 @@ def evaluate(text, subscriptions, disabled, enabled_actions, origin, group, admi
         return Verdict(
             command="nikke " + action + (" " + " ".join(tokens[2:]) if len(tokens) > 2 else "")
         )
+    if action in ("订阅", "退订"):
+        # Mutations require an exact name; never execute fuzzy matches.
+        if len(tokens) <= 3:
+            suffix = " " + tokens[2] if len(tokens) == 3 else ""
+            return Verdict(command="nikke " + action + suffix)
+        return Verdict(message=f"用法：/nikke {action} 订阅名称（名称不含空格）")
     if action in ("角色", "技能"):
         query = " ".join(tokens[2:])
         try:

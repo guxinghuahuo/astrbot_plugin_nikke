@@ -4,8 +4,9 @@
 
 ## 功能
 
-- **官方动态**：通过 RSSHub 订阅 bilibili 国服和 BlaBlaLink 繁中、英文、日文、韩文国际服动态。
+- **官方动态**：bilibili 国服使用配置中的 RSSHub 地址；繁中、英文、日文、韩文国际服默认直接访问 BlaBlaLink 官方接口。
 - **图文推送**：正文、来源链接、逐张原图与视频封面；SQLite 去重、失败重试和图片续传。
+- **聊天订阅管理**：AstrBot 管理员在 QQ 群或私聊中订阅、退订已配置的来源，保存后立即生效。
 - **国际服翻译**：英日韩动态翻译为简体中文，参考同帖繁中术语和配图，可选匹配 bilibili 配图。
 - **内容筛选**：bilibili 可选大模型筛选抽奖和引流内容，支持 Jev 前置判断。
 - **活动提醒**：国际服活动倒计时、提醒档位和夜间汇总。
@@ -30,8 +31,8 @@ QQ 群内的活动到期提醒、国际服动态中文翻译与视频封面推�
 | 项目 | 要求 |
 | --- | --- |
 | AstrBot | `>=4.10.4` |
-| 消息平台 | OneBot v11（`aiocqhttp`）QQ 群 |
-| RSSHub | 资讯订阅需要；国际服需要部署附带的私有路由 |
+| 消息平台 | OneBot v11（`aiocqhttp`）；动态订阅支持 QQ 群及私聊 |
+| RSSHub | 仅 bilibili 动态及其配图回退需要；国际服默认直连官方，无需部署 RSSHub |
 | 模型 | 翻译、筛选、配图匹配和聊天查询按需使用 AstrBot 已配置的模型 |
 | 文转图服务 | 可选；角色图片回复复用 AstrBot 已配置的 t2i 服务 |
 
@@ -39,13 +40,15 @@ QQ 群内的活动到期提醒、国际服动态中文翻译与视频封面推�
 
 ## 安装
 
-在 AstrBot 插件管理中选择「从链接安装」，填写：
+在 AstrBot 插件市场搜索 **NIKKE 资讯助手**，找到插件后点击安装。
+
+也可在 AstrBot 插件管理中选择「从链接安装」，填写：
 
 ```text
 https://github.com/guxinghuahuo/astrbot_plugin_nikke
 ```
 
-也可从 [v1.1.1 发布页](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.1.1) 下载 `astrbot_plugin_nikke-v1.1.1.zip`，通过插件管理页上传。依赖由 AstrBot 安装。
+也可从 [v1.2.0 发布页](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.2.0) 下载 `astrbot_plugin_nikke-v1.2.0.zip`，通过插件管理页上传。依赖由 AstrBot 安装。
 
 ## 首次使用
 
@@ -54,8 +57,8 @@ https://github.com/guxinghuahuo/astrbot_plugin_nikke
 
 资讯订阅和自动推送按以下步骤配置：
 
-1. 部署 RSSHub；订阅国际服时，先启用 [BlaBlaLink 路由](deploy/rsshub/README.md#国际服路由)。
-2. 在「NIKKE 资讯助手 → 基础配置」填写 AstrBot 能访问的 RSSHub 地址，例如同一 Docker 网络中的 `http://rsshub:1200`。
+1. 仅订阅国际服时无需部署 RSSHub。订阅 bilibili 时，准备可用的 RSSHub 动态源。
+2. 在「基础配置」填写「RSSHub 地址」，供 bilibili 使用。「国际服直连官方接口」默认开启；关闭后，国际服也使用同一个 RSSHub 地址，需在该服务部署国际服路由。
 3. 在「订阅及目标群」选择来源和语言，填写目标 QQ 群号。连接多个 OneBot 账号时，还需填写 QQ 平台 ID。
 4. 管理员执行 `/nikke 检查 NIKKE官方` 确认读取正常；在目标群执行 `/nikke 最新 NIKKE官方` 预览一条真实图文。
 5. 开启自动推送。首次成功获取建立基线，之后的新动态才会自动发送。
@@ -69,12 +72,19 @@ https://github.com/guxinghuahuo/astrbot_plugin_nikke
 | `/nikke`、`/nikke 帮助` | 查看帮助 | 所有人 |
 | `/nikke 状态` | 订阅和待投递状态 | AstrBot 管理员 |
 | `/nikke 检查 订阅名称` | 检查来源和筛选结果 | AstrBot 管理员 |
+| `/nikke 订阅 [订阅名称]` | 不带名称列出来源；指定名称订阅当前群或私聊账号 | AstrBot 管理员 |
+| `/nikke 退订 [订阅名称]` | 不带名称列出当前订阅；指定名称退订当前会话 | AstrBot 管理员 |
 | `/nikke 最新 订阅名称` | 向当前群发送最新图文 | 对应订阅目标群成员 |
 | `/nikke 活动` | 查看活动 | 所有人 |
 | `/nikke 角色 角色名` | 国际服角色基础属性、武器与技能名称 | 所有人 |
 | `/nikke 技能 角色名 [等级]` | 三个基础技能，等级 1–10，默认 10 | 所有人 |
 
 详细选项、翻译策略、筛选规则和投递行为见 [配置与使用](docs/configuration.md)。
+
+先在 WebUI 添加并启用来源，再由 AstrBot 管理员在目标群或私聊中执行 `/nikke 订阅`，
+按列出的名称执行，例如 `/nikke 订阅 NIKKE国际服`。退订使用 `/nikke 退订 NIKKE国际服`。
+修改会保存到插件配置，重启后保留；只影响当前会话，不改变其他群或账号。
+自动推送总开关需开启，首次成功获取只建立基线，不补发历史动态；独立配置的活动提醒不受此操作影响。
 
 角色查询使用 **BlaBlaLink 官方繁中 CDN**，本地转换为简体，保留国际服术语。
 支持简繁输入和部分名称匹配；匹配到多个角色时列出候选，需改用完整名称。
@@ -86,7 +96,7 @@ https://github.com/guxinghuahuo/astrbot_plugin_nikke
 
 ## 升级与数据
 
-v1.1.1 修复角色资料模块的日志规范，统一使用 AstrBot 日志器，无需更改已有配置。
+v1.2.0 增加国际服默认直连和管理员聊天订阅、退订，沿用已有配置与数据。
 
 v1.1.0 增加角色、技能查询及可选图片回复，图片开关默认关闭，升级后按需开启。
 内部标识仍为 `astrbot_plugin_nikke`，沿用已有配置和 `data/plugin_data/astrbot_plugin_nikke/` 数据。升级前备份配置和数据，升级后重载插件。

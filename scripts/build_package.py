@@ -32,6 +32,7 @@ FILES = [
     "nikke/characters.py",
     "nikke/character_cards.py",
     "nikke/feed.py",
+    "nikke/blablalink.py",
     "nikke/network.py",
     "nikke/presentation.py",
     "nikke/service.py",

@@ -255,6 +255,10 @@ class RSSClient:
         await self.session.close()
 
     async def fetch(self, url: str) -> list[Entry]:
+        if url.startswith("blablalink:"):
+            from .blablalink import fetch_official
+
+            return await fetch_official(self, url)
         try:
             async with self.session.get(url, allow_redirects=False) as response:
                 if response.status != 200:

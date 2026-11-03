@@ -15,6 +15,7 @@ GROUP_FIELDS = {
     "base": (
         "enabled",
         "rsshub_base_url",
+        "international_direct",
         "poll_interval_seconds",
         "poll_jitter_seconds",
         "send_images",
@@ -43,8 +44,24 @@ def migrate_layout(config: dict) -> bool:
     AstrBot inserts new object defaults before initializing a plugin. Hidden old
     schema fields keep the original values available until this migration runs.
     """
+    changed = False
+    section = config.get("base", {})
+    if isinstance(section, dict):
+        for old_key in (
+            "international_source", "bilibili_rsshub_base_url", "international_rsshub_base_url"
+        ):
+            if old_key in section or old_key in config:
+                value = section.pop(old_key, config.get(old_key))
+                config.pop(old_key, None)
+                if old_key == "international_source":
+                    if value not in ("direct", "rsshub"):
+                        raise ValueError("国际服获取方式无效")
+                    section["international_direct"] = value == "direct"
+                changed = True
+        if changed:
+            config["base"] = section
     if config.get("_layout_version") == 1:
-        return False
+        return changed
     grouped = {}
     for group, fields in GROUP_FIELDS.items():
         section = config.get(group, {})
@@ -97,7 +114,7 @@ def resolve_targets(
         if (
             len(parts) != 3
             or not parts[0]
-            or parts[1] != "GroupMessage"
+            or parts[1] not in ("GroupMessage", "FriendMessage")
             or not parts[2].split("_")[-1].isdigit()
         ):
             raise ValueError("目标群格式不正确，请填写正整数 QQ 群号，例如 123456789")
@@ -393,14 +410,18 @@ class Settings:
         ):
             raise ValueError("Jev 分类条件必须包含 normal、lottery、uncertain 三项非空说明")
         base = str(config.get("rsshub_base_url", "http://localhost:1200")).rstrip("/")
-        parsed = urlsplit(base)
+        international_direct = config.get("international_direct", True)
+        if type(international_direct) is not bool:
+            raise ValueError("国际服直连官方接口必须为开关")
+        try:
+            parsed = urlsplit(base)
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("RSSHub 地址格式无效") from exc
         if (
-            parsed.scheme not in ("http", "https")
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
+            parsed.scheme not in ("http", "https") or not parsed.hostname
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+            or port is not None and not 1 <= port <= 65535
         ):
             raise ValueError("RSSHub 地址应为不含账号、查询参数和片段的 HTTP(S) 地址")
         try:
@@ -496,7 +517,11 @@ class Settings:
             if source == "blablalink":
                 if language not in OFFICIAL_LANGUAGES:
                     raise ValueError("国际服语言须为 zh-TW、en、ja 或 ko")
-                url = f"{base}/nikke-blablalink/official/{language}"
+                url = (
+                    f"blablalink://official/{language}"
+                    if international_direct
+                    else f"{base}/nikke-blablalink/official/{language}"
+                )
             else:
                 if not uid.isascii() or not uid.isdigit() or int(uid) <= 0:
                     raise ValueError("bilibili UID 必须是正整数")
@@ -513,11 +538,15 @@ class Settings:
             )
             if source == "blablalink":
                 for target in targets:
-                    # One QQ group must not receive different languages through different bots.
-                    group = str(int(target.split(":")[-1].split("_")[-1]))
+                    # A QQ group/account receives one language, even through different bots.
+                    kind = target.split(":")[1]
+                    group = (kind, str(int(target.split(":")[-1].split("_")[-1])))
                     if group in international_targets:
                         other = international_targets[group]
-                        raise ValueError(f"QQ 群 {group} 的国际服语言冲突：{other} 与 {name}")
+                        label = "群" if kind == "GroupMessage" else "账号"
+                        raise ValueError(
+                            f"QQ {label} {group[1]} 的国际服语言冲突：{other} 与 {name}"
+                        )
                     international_targets[group] = name
             simplify = item.get("simplify", True)
             if type(simplify) is not bool:
