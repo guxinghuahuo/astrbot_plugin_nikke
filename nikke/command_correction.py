@@ -9,8 +9,22 @@ from functools import lru_cache
 from .characters import QUERY_EXTRA, CharacterError, parse_query
 from .chinese import simplified
 from .config import flatten_config, resolve_targets
+from .outpost import SUGGESTIONS, USAGE, OutpostError
+from .outpost import parse_query as parse_outpost_query
 
-ACTIONS = ("帮助", "最新", "活动", "状态", "检查", "角色", "技能", "订阅", "退订")
+ACTIONS = (
+    "帮助",
+    "最新",
+    "活动",
+    "状态",
+    "检查",
+    "角色",
+    "技能",
+    "订阅",
+    "退订",
+    "基地等级",
+    "红球",
+)
 ADMIN_ACTIONS = {"状态", "检查", "订阅", "退订"}
 NAMED_ACTIONS = {"最新", "检查"}
 CORRECTED_COMMAND = "nikke_corrected_command"
@@ -115,7 +129,10 @@ def usage_actions(actions, subscriptions, origin, group, remaining=()):
                 command_lines(action, candidates, remaining[0] if remaining else "").splitlines()[0]
             )
         else:
-            lines.append("/nikke " + action + (" 角色名" if action in ("角色", "技能") else ""))
+            lines.append(
+                USAGE.get(action)
+                or ("/nikke " + action + (" 角色名" if action in ("角色", "技能") else ""))
+            )
     return "\n".join(lines[:3]) or "当前没有可用的子指令。"
 
 
@@ -132,6 +149,9 @@ def evaluate(text, subscriptions, disabled, enabled_actions, origin, group, admi
         )
     action = next((a for a in ACTIONS if normalize(a) == normalize(tokens[1])), None)
     if action is None:
+        suggested = SUGGESTIONS.get(normalize(tokens[1]))
+        if suggested in actions:
+            return Verdict(message="请使用固定指令：\n" + USAGE[suggested])
         ranked = sorted(
             actions,
             key=lambda a: (-similarity(normalize(tokens[1]), normalize(a)), ACTIONS.index(a)),
@@ -146,6 +166,17 @@ def evaluate(text, subscriptions, disabled, enabled_actions, origin, group, admi
             message="此子指令已停用。当前可用示例：\n"
             + usage_actions(actions, subscriptions, origin, group)
         )
+    if action in USAGE:
+        if tokens[1] != action or (
+            len(tokens) != 3 if action == "基地等级" else len(tokens) not in (3, 4)
+        ):
+            return Verdict(message="请使用固定指令：\n" + USAGE[action])
+        query = " ".join(tokens[2:])
+        try:
+            parse_outpost_query(action, query)
+        except OutpostError as exc:
+            return Verdict(message=str(exc))
+        return Verdict(command="nikke " + action + " " + query)
     if action in ADMIN_ACTIONS and not admin:
         # Leave parameter parsing/denial to the native permission filter; never expose names.
         return Verdict(
@@ -293,7 +324,7 @@ class CommandPreflight:
             event.stop_event()
             raise ValueError(verdict.message)
         event.message_str = verdict.command
-        if verdict.command.split()[1] in ("角色", "技能"):
+        if verdict.command.split()[1] in ("角色", "技能", "红球"):
             # AstrBot str arguments may consume only one token. Preserve the full
             # validated name plus optional level on this event, not global state.
             event.set_extra(QUERY_EXTRA, verdict.command.split(" ", 2)[2])

@@ -18,6 +18,8 @@ from .nikke.command_correction import CORRECTED_COMMAND, CommandPreflight
 from .nikke.config import Settings, migrate_layout, resolve_targets
 from .nikke.feed import FeedError, RSSClient
 from .nikke.image_fallback import ImageMatcher
+from .nikke.outpost import OutpostError
+from .nikke.outpost import query as query_outpost
 from .nikke.service import SEND_TIMEOUT, Service, error_summary, timestamp
 from .nikke.store import Store
 from .nikke.translation import Translator
@@ -94,7 +96,7 @@ class NikkePlugin(Star):
             self.service = None
             raise
         logger.info(
-            "[NIKKE] 插件 v1.2.0 已加载，自动推送=%s，检查间隔=%s±%s 秒",
+            "[NIKKE] 插件 v1.3.0 已加载，自动推送=%s，检查间隔=%s±%s 秒",
             settings.enabled,
             settings.interval,
             settings.jitter,
@@ -179,13 +181,13 @@ class NikkePlugin(Star):
         await event.send(event.plain_result(text))
         logger.info("[NIKKE] 命令回复成功：会话=%s", event.unified_msg_origin)
 
-    async def _reply_character(self, event: AstrMessageEvent, pages: list[str]):
+    async def _reply_character(self, event: AstrMessageEvent, pages: list[str], *, subtitle=None):
         if not self.service.settings.character_image_enabled:
             for page in pages:
                 await self._reply(event, page)
             return
         try:
-            cards = build_cards(pages)
+            cards = build_cards(pages, **({"subtitle": subtitle} if subtitle else {}))
             kwargs = {"return_url": False, "options": CARD_OPTIONS}
             # AstrBot 4.10.4 uses the global renderer. Newer releases can also
             # resolve the t2i endpoint from a session's bound configuration.
@@ -198,10 +200,10 @@ class NikkePlugin(Star):
                     raise ValueError("文转图未返回图片")
                 images.append(path)
         except Exception as exc:
-            logger.warning("[NIKKE] 角色资料图片渲染失败：%s", type(exc).__name__)
+            logger.warning("[NIKKE] 查询资料图片渲染失败：%s", type(exc).__name__)
             await self._reply(
                 event,
-                "角色资料图片渲染失败，请检查 AstrBot 配置的本地 t2i 服务。"
+                "查询资料图片渲染失败，请检查 AstrBot 配置的本地 t2i 服务。"
                 "关闭插件的“角色与技能图片回复”可查看文字。",
             )
             return
@@ -318,6 +320,16 @@ class NikkePlugin(Star):
         """查询角色技能，可在名称后指定 1–10 级，默认 10 级。"""
         await self._run_command(event, "技能", name)
 
+    @nikke.command("基地等级")
+    async def nikke_outpost(self, event: AstrMessageEvent, level: str = ""):
+        """查询基地满学院每小时产出，示例：基地等级 533。"""
+        await self._run_command(event, "基地等级", level)
+
+    @nikke.command("红球")
+    async def nikke_core_dust(self, event: AstrMessageEvent, stage: str = ""):
+        """按通关进度查询红球，示例：红球 h48-32 或 红球 33-23 h18-32。"""
+        await self._run_command(event, "红球", stage)
+
     @filter.permission_type(filter.PermissionType.ADMIN)
     @nikke.command("检查")
     async def nikke_check(self, event: AstrMessageEvent, name: str = ""):
@@ -344,7 +356,7 @@ class NikkePlugin(Star):
     async def _run_command(self, event: AstrMessageEvent, action: str = "帮助", name: str = ""):
         event.should_call_llm(False)
         event.stop_event()
-        if action in ("角色", "技能"):
+        if action in ("角色", "技能", "红球"):
             name = event.get_extra(QUERY_EXTRA) or name
             event.set_extra(QUERY_EXTRA, None)
         logger.info(
@@ -361,7 +373,8 @@ class NikkePlugin(Star):
             corrected = event.get_extra(CORRECTED_COMMAND)
             if corrected:
                 event.set_extra(CORRECTED_COMMAND, None)
-                await self._reply(event, "已识别为：" + corrected)
+                if action not in ("基地等级", "红球"):
+                    await self._reply(event, "已识别为：" + corrected)
             await self._handle_command(event, action, name)
         except Exception as exc:
             logger.error(
@@ -388,6 +401,15 @@ class NikkePlugin(Star):
                 return
             if action in ("订阅", "退订"):
                 await self._change_subscription(event, action, name)
+                return
+            if action in ("基地等级", "红球"):
+                try:
+                    pages = await asyncio.to_thread(query_outpost, action, name)
+                except OutpostError as exc:
+                    await self._reply(event, str(exc))
+                    return
+                for page in pages:
+                    await self._reply(event, page)
                 return
             if action in ("角色", "技能"):
                 if self.characters is None:
@@ -455,6 +477,9 @@ class NikkePlugin(Star):
                 event,
                 "/nikke 帮助（所有人）\n/nikke 状态（管理员）\n"
                 "/nikke 活动（所有人，查询国际服活动倒计时）\n"
+                "/nikke 基地等级 533（查询基地每小时产出）\n"
+                "/nikke 红球 h48-32（默认普通全通）\n"
+                "/nikke 红球 33-23 h18-32（普通、困难顺序不限）\n"
                 "/nikke 角色 角色名（国际服基础资料，繁中转简体）\n"
                 "/nikke 技能 角色名 [等级1–10]（默认10级，无需登录）\n"
                 "/nikke 检查 订阅名称（管理员，只检查来源）\n"

@@ -1,7 +1,7 @@
 name: astrbot_plugin_nikke
 display_name: NIKKE 资讯助手
-desc: 订阅 bilibili 与 BlaBlaLink 国际服官方动态，支持 QQ 群图文推送、翻译、活动提醒，以及无需登录的国际服角色与技能查询。
-version: v1.2.0
+desc: 订阅 bilibili 与 BlaBlaLink 国际服官方动态，支持 QQ 群图文推送、翻译、活动提醒，以及无需登录的角色、技能、基地等级与红球查询。
+version: v1.3.0
 author: guxinghuahuo
 repo: https://github.com/guxinghuahuo/astrbot_plugin_nikke
 tags:

@@ -52,11 +52,11 @@ def line_cost(line):
     return max(1, math.ceil(units / 56))
 
 
-def build_cards(pages: list[str]) -> list[dict]:
+def build_cards(pages: list[str], *, subtitle="国际服 · 繁中转简体") -> list[dict]:
     """Combine three skills, repeat common provenance once, paginate without truncation."""
     if not pages or sum(map(len, pages)) > 24000:
         raise ValueError("角色资料过长，暂时无法渲染图片。")
-    title, subtitle, footer = "角色资料", "国际服 · 繁中转简体", ""
+    title, footer = "角色资料", ""
     notes, sections, cards = [], [], []
     used = 0
 

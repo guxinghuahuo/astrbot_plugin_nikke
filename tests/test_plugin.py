@@ -149,12 +149,19 @@ async def dispatch_command(plugin, text, event, disabled=()):
         if command in disabled or not (text == command or text.startswith(command + " ")):
             continue
         remaining = text[len(command) :].strip()
-        if command in ("nikke 角色", "nikke 技能"):
+        if command in ("nikke 角色", "nikke 技能", "nikke 红球"):
             # Native AstrBot str defaults consume one token. Preflight must
             # preserve the optional level and multi-token names on the event.
             remaining = remaining.split()[0] if remaining else ""
         if command in (
-            "nikke 检查", "nikke 最新", "nikke 角色", "nikke 技能", "nikke 订阅", "nikke 退订"
+            "nikke 检查",
+            "nikke 最新",
+            "nikke 角色",
+            "nikke 技能",
+            "nikke 订阅",
+            "nikke 退订",
+            "nikke 基地等级",
+            "nikke 红球",
         ):
             await getattr(plugin, name)(event, remaining)
         else:
@@ -175,6 +182,8 @@ def test_native_group_children_and_backend_permission_metadata(plugin_class):
         "nikke 技能",
         "nikke 订阅",
         "nikke 退订",
+        "nikke 基地等级",
+        "nikke 红球",
     }
     assert plugin_class.nikke.name == "nikke"
     assert plugin_class.nikke.description
@@ -430,6 +439,70 @@ def test_character_query_preserves_full_arguments_and_disabled_child(plugin_clas
         finally:
             await plugin.terminate()
         assert plugin.characters is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "nikke 前哨 533",
+        "nikke 防御等级 533",
+        "nikke 芯尘表 50-36",
+        "nikke 红球查询 50-36",
+        "nikke 基地等级 533 多余",
+        "nikke 红球",
+    ],
+)
+def test_outpost_nonstandard_commands_do_not_execute_or_render(plugin_class, text):
+    async def scenario():
+        plugin = plugin_class(context(), {})
+        await plugin.initialize()
+        try:
+            plugin._handle_command = AsyncMock()
+            plugin.html_render = AsyncMock()
+            event = FakeEvent(admin=False)
+            await preflight_dispatch(plugin, event, text)
+            assert len(event.replies) == 1 and "/nikke " in event.replies[0]
+            assert event.stopped and not event.call_llm
+            plugin._handle_command.assert_not_awaited()
+            plugin.html_render.assert_not_awaited()
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("images", [False, True])
+def test_public_outpost_queries_always_send_only_short_text(plugin_class, images):
+    async def scenario():
+        plugin = plugin_class(context(), {"base": {"character_image_enabled": images}})
+        await plugin.initialize()
+        plugin.html_render = AsyncMock(return_value="/tmp/outpost.jpg")
+        try:
+            for text, expected in (
+                ("nikke 基地等级 533", "102.22"),
+                ("nikke 红球 h48-32", "红球："),
+                ("nikke 红球 33-23 h18-32", "基地等级：316"),
+                ("nikke 红球 h18-32 33-23", "基地等级：316"),
+                ("NIKKE 红球 h18-32 33-23", "基地等级：316"),
+            ):
+                event = FakeEvent(admin=False)
+                await preflight_dispatch(plugin, event, text)
+                assert len(event.replies) == 1
+                assert event.stopped and not event.call_llm
+                assert expected in event.replies[0]
+                assert len(event.replies[0].splitlines()) <= 4
+            plugin.html_render.assert_not_awaited()
+            child = next(
+                c for c in plugin_class.nikke.sub_command_filters if c.command_name == "红球"
+            )
+            child.handler_md.enabled = False
+            event = FakeEvent(admin=False)
+            await preflight_dispatch(plugin, event, "nikke 红球 h48-32")
+            assert "停用" in event.replies[0]
+        finally:
+            await plugin.terminate()
 
     asyncio.run(scenario())
 
@@ -697,7 +770,8 @@ def test_chat_subscription_denial_and_disabled_handler(plugin_class, tmp_path, a
             await preflight_dispatch(plugin, event, f"nikke {action} NIKKE官方")
             assert "管理员" in event.replies[0] and not cfg.saves
             child = next(
-                c for c in plugin.command_preflight.group.sub_command_filters
+                c
+                for c in plugin.command_preflight.group.sub_command_filters
                 if c.command_name == action
             )
             child.handler_md.enabled = False
@@ -795,6 +869,7 @@ def test_chat_subscription_failure_restores_config_and_runtime(
             if failure == "save":
                 cfg.fail_save = True
             else:
+
                 def fail_sync(subs):
                     raise OSError("database unavailable")
 
@@ -835,16 +910,28 @@ def test_subscription_conflict_and_bot_account_scope(plugin_class, tmp_path):
     async def scenario():
         cfg = subscription_config(tmp_path)
         cfg["subscriptions"] += [
-            {"name": "英文", "source": "blablalink", "language": "en", "enabled": True,
-             "targets": ["qq:GroupMessage:100"]},
-            {"name": "日文", "source": "blablalink", "language": "ja", "enabled": True,
-             "targets": []},
+            {
+                "name": "英文",
+                "source": "blablalink",
+                "language": "en",
+                "enabled": True,
+                "targets": ["qq:GroupMessage:100"],
+            },
+            {
+                "name": "日文",
+                "source": "blablalink",
+                "language": "ja",
+                "enabled": True,
+                "targets": [],
+            },
         ]
         ctx = context()
-        ctx.get_config = lambda: {"platform": [
-            {"id": "qq", "type": "aiocqhttp", "enable": True},
-            {"id": "qq2", "type": "aiocqhttp", "enable": True},
-        ]}
+        ctx.get_config = lambda: {
+            "platform": [
+                {"id": "qq", "type": "aiocqhttp", "enable": True},
+                {"id": "qq2", "type": "aiocqhttp", "enable": True},
+            ]
+        }
         cfg["base"] = {"qq_platform_id": "qq"}
         plugin = plugin_class(ctx, cfg)
         await plugin.initialize()
@@ -855,7 +942,8 @@ def test_subscription_conflict_and_bot_account_scope(plugin_class, tmp_path):
             event.unified_msg_origin = "qq2:GroupMessage:200"
             await preflight_dispatch(plugin, event, "nikke 订阅 NIKKE官方")
             assert plugin.service.settings.subscriptions[0].targets == (
-                "qq:GroupMessage:200", "qq2:GroupMessage:200"
+                "qq:GroupMessage:200",
+                "qq2:GroupMessage:200",
             )
             await preflight_dispatch(plugin, event, "nikke 退订 NIKKE官方")
             assert plugin.service.settings.subscriptions[0].targets == ("qq:GroupMessage:200",)
@@ -893,7 +981,8 @@ def test_private_subscription_delivers_new_posts_only(plugin_class, tmp_path):
             await service.poll_once()
             await service.deliver_once()
             assert {call.args[0] for call in service.sender.await_args_list} == {
-                "qq:GroupMessage:200", event.unified_msg_origin
+                "qq:GroupMessage:200",
+                event.unified_msg_origin,
             }
             assert all("new post" in call.args[1] for call in service.sender.await_args_list)
             assert service.store.status(service.settings.subscriptions[0].key)["pending"] == 0
@@ -927,9 +1016,7 @@ def test_subscription_cancellation_finishes_save_before_resuming_tasks(
             original_save()
 
         cfg.save_config = slow_save
-        task = asyncio.create_task(
-            preflight_dispatch(plugin, FakeEvent(), "nikke 订阅 NIKKE官方")
-        )
+        task = asyncio.create_task(preflight_dispatch(plugin, FakeEvent(), "nikke 订阅 NIKKE官方"))
         try:
             assert await asyncio.to_thread(started.wait, 5)
             task.cancel()
@@ -972,7 +1059,8 @@ def test_subscription_skips_disabled_duplicate_name_and_rejects_unsupported_plat
             await preflight_dispatch(plugin, FakeEvent(), "nikke 订阅 NIKKE官方")
             assert cfg["subscriptions"][0] == disabled
             assert cfg["subscriptions"][1]["targets"] == [
-                "qq:GroupMessage:200", "qq:GroupMessage:100"
+                "qq:GroupMessage:200",
+                "qq:GroupMessage:100",
             ]
         finally:
             await plugin.terminate()
