@@ -33,7 +33,10 @@ GROUP_FIELDS = {
         "jev_model",
         "jev_timeout_seconds",
     ),
-    "chat_tools": ("chat_context_enabled", "chat_context_days", "chat_context_max_chars"),
+    "chat_tools": (
+        "chat_context_enabled", "chat_context_days", "chat_context_max_chars",
+        "character_skills_tool_enabled",
+    ),
 }
 GROUP_LABELS = {"base": "基础配置", "ai_filter": "AI 内容筛选", "chat_tools": "聊天查询工具"}
 
@@ -336,6 +339,7 @@ class Settings:
     image_fallback: ImageFallbackSettings = field(default_factory=ImageFallbackSettings)
     translation: TranslationSettings = field(default_factory=TranslationSettings)
     character_image_enabled: bool = False
+    character_skills_tool_enabled: bool = False
 
     @property
     def default_llm_policy(self) -> bool:
@@ -578,4 +582,5 @@ class Settings:
             ImageFallbackSettings.from_dict(config.get("image_fallback", {}), base),
             TranslationSettings.from_dict(config.get("translation", {})),
             bool(config.get("character_image_enabled", False)),
+            bool(config.get("character_skills_tool_enabled", False)),
         )

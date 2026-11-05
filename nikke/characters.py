@@ -22,6 +22,7 @@ LIST_PATH = "character/zh-tw/nikke_list_zh-TW_v2.json"
 TTL = 86400
 MAX_BYTES = 8 * 1024 * 1024
 QUERY_EXTRA = "nikke_character_query"
+SKILL_TOOL_NAME = "nikke_query_character_skills"
 
 
 class CharacterError(ValueError):

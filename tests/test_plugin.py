@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import json
 import logging
+import re
 import sys
 import threading
 import types
@@ -42,6 +43,17 @@ def plugin_class(monkeypatch, tmp_path):
 
     def decorator(*args, **kwargs):
         return lambda func: func
+
+    def llm_tool(name):
+        def register(func):
+            # 4.10.4 builds the schema from Args docstrings, not annotations.
+            func.tool_registration = (
+                name,
+                dict(re.findall(r"^\s+(\w+)\((\w+)\):", func.__doc__ or "", re.M)),
+            )
+            return func
+
+        return register
 
     def command(name, **kwargs):
         def register(func):
@@ -96,7 +108,7 @@ def plugin_class(monkeypatch, tmp_path):
         command=command,
         command_group=command_group,
         on_llm_request=decorator,
-        llm_tool=decorator,
+        llm_tool=llm_tool,
         permission_type=permission_type,
         PermissionType=types.SimpleNamespace(ADMIN="admin"),
     )
@@ -1399,6 +1411,127 @@ def test_tool_validates_dates_before_reading_and_handles_no_tools(plugin_class):
             plugin.service.store.recent_entries.assert_not_called()
             await plugin.terminate()
             assert "未开启" in await plugin.query_official_posts(event, "今天", "今天")
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_skill_tool_registration_uses_supported_docstring_types(plugin_class):
+    assert plugin_class.query_character_skills.tool_registration == (
+        "nikke_query_character_skills", {"character_name": "string", "skill_level": "number"}
+    )
+
+
+@pytest.mark.parametrize("group", ["100", "", "unsubscribed"])
+def test_skill_tool_queries_without_subscription_and_returns_data_only(plugin_class, group):
+    async def scenario():
+        plugin = plugin_class(context(), {"chat_tools": {"character_skills_tool_enabled": True}})
+        await plugin.initialize()
+        try:
+            plugin.service.settings = replace(plugin.service.settings, character_image_enabled=True)
+            pages = [
+                "【拉毗：小红帽 · 技能1 Lv.7】\n攻击力6.77%\n（基础技能，未计珍藏品强化）",
+                "技能2\n官方资料刷新失败，以下使用本地旧缓存。",
+                "爆裂技能\n资料校验：2026-11-05\n来源：BlaBlaLink",
+            ]
+            plugin.characters.query = AsyncMock(return_value=pages)
+            plugin.html_render = AsyncMock()
+            event = FakeEvent(group)
+            tool = types.SimpleNamespace(name="nikke_query_character_skills")
+            req = types.SimpleNamespace(func_tool=types.SimpleNamespace(tools=[tool]))
+            await plugin.configure_official_tool(event, req)
+            assert req.func_tool.tools == [tool]
+            result = await plugin.query_character_skills(event, " 拉毗：小红帽 ", 7.0)
+            plugin.characters.query.assert_awaited_once_with("拉毗：小红帽 7", skills=True)
+            assert json.loads(result.split("\n")[-1]) == {"skills": pages}
+            await plugin.query_character_skills(event, "小紅帽")
+            plugin.characters.query.assert_awaited_with("小紅帽 10", skills=True)
+            plugin.html_render.assert_not_awaited()
+            plugin.context.send_message.assert_not_awaited()
+            assert not event.stopped and not event.replies
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_skill_tool_switch_is_independent_and_does_not_mutate_shared_tools(plugin_class, enabled):
+    async def scenario():
+        plugin = plugin_class(context(), {"chat_tools": {"character_skills_tool_enabled": enabled}})
+        await plugin.initialize()
+        try:
+            plugin.characters.query = AsyncMock(return_value=["技能"])
+            own = types.SimpleNamespace(name="nikke_query_character_skills")
+            news = types.SimpleNamespace(name="nikke_query_official_posts")
+            other = types.SimpleNamespace(name="other_tool")
+            shared = types.SimpleNamespace(tools=[own, news, other])
+            req = types.SimpleNamespace(
+                func_tool=shared, prompt="技能效果？", system_prompt="原人设", contexts=[]
+            )
+            event = FakeEvent()
+            for _ in range(2):
+                await plugin.configure_official_tool(event, req)
+            assert req.func_tool.tools == ([own, other] if enabled else [other])
+            assert shared.tools == [own, news, other]
+            assert req.prompt == "技能效果？" and req.system_prompt == "原人设"
+            assert req.contexts == []
+            plugin.characters.query.assert_not_awaited()
+            empty_req = types.SimpleNamespace(func_tool=None)
+            await plugin.configure_official_tool(event, empty_req)
+            assert empty_req.func_tool is None
+            if not enabled:
+                assert "未开启" in await plugin.query_character_skills(event, "小红帽")
+                plugin.characters.query.assert_not_awaited()
+        finally:
+            await plugin.terminate()
+        assert "未开启" in await plugin.query_character_skills(FakeEvent(), "小红帽")
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "name,level",
+    [(None, 10), (42, 10), ("", 10), ("  ", 10), ("a" * 101, 10),
+     ("小红帽", 0), ("小红帽", 11), ("小红帽", 1.5), ("小红帽", True),
+     ("小红帽", "7"), ("小红帽", None), ("小红帽", float("nan")),
+     ("小红帽", float("inf"))],
+)
+def test_skill_tool_rejects_invalid_model_arguments_before_querying(plugin_class, name, level):
+    async def scenario():
+        plugin = plugin_class(context(), {"character_skills_tool_enabled": True})
+        await plugin.initialize()
+        try:
+            plugin.characters.query = AsyncMock()
+            assert "参数有误" in await plugin.query_character_skills(FakeEvent(), name, level)
+            plugin.characters.query.assert_not_awaited()
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["ambiguous", "network", "cancel"])
+def test_skill_tool_handles_catalog_errors_and_preserves_cancellation(plugin_class, mode, caplog):
+    async def scenario():
+        plugin = plugin_class(context(), {"character_skills_tool_enabled": True})
+        await plugin.initialize()
+        try:
+            error_type = plugin.query_character_skills.__globals__["CharacterError"]
+            error = (
+                error_type("匹配到多个角色：小红帽、拉毗：小红帽。请使用完整名称。")
+                if mode == "ambiguous" else RuntimeError("private-path-or-proxy-credential")
+                if mode == "network" else asyncio.CancelledError()
+            )
+            plugin.characters.query = AsyncMock(side_effect=error)
+            if mode == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await plugin.query_character_skills(FakeEvent(), "红帽")
+            else:
+                result = await plugin.query_character_skills(FakeEvent(), "红帽")
+                assert ("匹配到多个角色" if mode == "ambiguous" else "暂时读取失败") in result
+                assert "private-path-or-proxy-credential" not in result + caplog.text
         finally:
             await plugin.terminate()
 

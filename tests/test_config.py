@@ -205,6 +205,18 @@ def test_layout_section_order_and_preserves_field_widgets():
         assert set(schema[group]["items"]) == set(fields)
 
 
+def test_character_skills_tool_setting_defaults_off_and_survives_webui_reload():
+    schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
+    assert not Settings.from_dict({}).character_skills_tool_enabled
+    saved = {"chat_tools": {"character_skills_tool_enabled": True}}
+    loaded = schema_load(schema, saved)
+    migrate_layout(loaded)
+    assert Settings.from_dict(loaded).character_skills_tool_enabled
+    reloaded = schema_load(schema, loaded)
+    assert Settings.from_dict(reloaded).character_skills_tool_enabled
+    assert not Settings.from_dict(reloaded).chat_context_enabled
+
+
 def test_upgrade_preserves_token_and_all_old_settings_before_and_after_framework_reload():
     schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
     original = {

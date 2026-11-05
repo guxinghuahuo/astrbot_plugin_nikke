@@ -22,7 +22,7 @@ def test_release_is_complete_reproducible_and_excludes_local_state(package_root)
     (package_root / ".env").write_text("secret", encoding="utf-8")
     output = build_package.build()
     content = output.read_bytes()
-    assert output.name == "astrbot_plugin_nikke-v1.3.0.zip"
+    assert output.name == "astrbot_plugin_nikke-v1.3.1.zip"
     assert len(content) < 16 * 1024 * 1024
     with ZipFile(output) as archive:
         assert archive.testzip() is None

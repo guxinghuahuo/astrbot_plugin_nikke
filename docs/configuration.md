@@ -311,6 +311,27 @@ docker exec astrbot python /AstrBot/data/plugins/astrbot_plugin_nikke/scripts/ch
 
 日历接口接入方式参考 [NIKKEAutoScript 日历实现](https://github.com/megumiss/NIKKEAutoScript/blob/dbe59a42e0025e4a4d7c49aba8864d03a684ffa5/module/webui/api/routes_calendar.py)，提醒调度、队列及重试由本插件实现。第一版不包含国服、维护公告解析、每日固定汇总和活动图片。
 
+## 角色技能查询工具
+
+在「聊天查询工具」中开启「允许模型查询角色技能」
+（`character_skills_tool_enabled`，默认关闭），并在 AstrBot 中允许该工具。
+需要支持工具调用的聊天模型和 Agent 执行器。
+
+工具为 `nikke_query_character_skills(character_name, skill_level=10)`：
+角色名使用国际服完整中文名，支持简繁体；等级为1至10的整数。
+每次返回一个角色的技能1、技能2及爆裂技能，三个技能使用相同等级，
+仅含基础技能，不包含珍藏品强化。遇到名称歧义会返回候选名称，不猜测角色。
+
+例如自然提问“拉毗：小红帽7级技能的倍率是多少？”，模型可调用
+`nikke_query_character_skills(character_name="拉毗：小红帽", skill_level=7)`。
+省略等级时使用10级，也可显式传入10。
+
+此开关与本地动态查询独立，群聊和私聊均可使用，无需配置资讯订阅、账号或 Cookie。
+工具调用时才查询 BlaBlaLink 繁中 CDN，繁简转换、24小时缓存、旧缓存提示和国际服图片代理
+与 `/nikke 技能` 共用；未调用时不获取资料。返回文字资料给模型，保留校验时间、
+来源和基础技能限制，不直接发送群消息，也不使用 t2i。关闭开关后从当前请求中移除工具，
+执行入口也会再次检查开关；不修改共享工具列表、人设或聊天历史。
+
 ## 本地官方动态查询工具
 
 v0.1.5 新增独立存档表 `archive_entries`，与原来的投递队列共用 `subscriptions.sqlite3`。自动轮询、手动检查和预览成功时，保存每条动态的标题、正文、原链接、发布时间和图片地址；不保存图片二进制。每个来源的同一动态只存一份，正文变更会更新。首次基线、已发送及被筛选的动态均可留作资料；后续投递清空队列正文不会清空存档。移除订阅仍保留已存档资料，但聊天只读取当前启用并绑定当前群的订阅。
