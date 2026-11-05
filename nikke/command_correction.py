@@ -6,7 +6,7 @@ import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .characters import QUERY_EXTRA, CharacterError, parse_query
+from .characters import QUERY_EXTRA, SKILL_USAGE, CharacterError, parse_query
 from .chinese import simplified
 from .config import flatten_config, resolve_targets
 from .outpost import SUGGESTIONS, USAGE, OutpostError
@@ -131,6 +131,7 @@ def usage_actions(actions, subscriptions, origin, group, remaining=()):
         else:
             lines.append(
                 USAGE.get(action)
+                or (SKILL_USAGE if action == "技能" else "")
                 or ("/nikke " + action + (" 角色名" if action in ("角色", "技能") else ""))
             )
     return "\n".join(lines[:3]) or "当前没有可用的子指令。"

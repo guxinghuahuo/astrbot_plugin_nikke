@@ -19,6 +19,9 @@ from .network import image_proxy_url
 SOURCE = "https://www.blablalink.com/shiftyspad/nikke-list"
 CDN = "https://sg-tools-cdn.blablalink.com"
 LIST_PATH = "character/zh-tw/nikke_list_zh-TW_v2.json"
+TREASURE_LIST_PATH = "equip/favorite_rare_map.json"
+TREASURE_TIMEOUT = 45
+SKILL_USAGE = "/nikke 技能 角色名 [等级1–10] [珍藏品1–3]"
 TTL = 86400
 MAX_BYTES = 8 * 1024 * 1024
 QUERY_EXTRA = "nikke_character_query"
@@ -55,7 +58,28 @@ def normal_name(value: str) -> str:
     return re.sub(r"\s+", "", simplified(unicodedata.normalize("NFKC", value))).casefold()
 
 
+def parse_skill_query(query: str) -> tuple[str, int, int]:
+    query = unicodedata.normalize("NFKC", query).strip()
+    tokens = query.split()
+    phase = 0
+    if any("珍藏" in token for token in tokens):
+        match = re.fullmatch(r"珍藏品([1-3])", tokens[-1])
+        if not match or any("珍藏" in token for token in tokens[:-1]):
+            raise CharacterError("用法：" + SKILL_USAGE + "，例如：/nikke 技能 拉普拉斯 10 珍藏品3")
+        phase = int(match[1])
+        query = " ".join(tokens[:-1])
+    name, level = _parse_name_level(query, skills=True)
+    return name, level, phase
+
+
 def parse_query(query: str, skills: bool) -> tuple[str, int]:
+    if skills:
+        name, level, _ = parse_skill_query(query)
+        return name, level
+    return _parse_name_level(query, skills=False)
+
+
+def _parse_name_level(query: str, skills: bool) -> tuple[str, int]:
     query = unicodedata.normalize("NFKC", query).strip()
     level = 10
     if skills:
@@ -65,8 +89,7 @@ def parse_query(query: str, skills: bool) -> tuple[str, int]:
         if not 1 <= level <= 10:
             raise CharacterError("技能等级须为 1–10，例如：/nikke 技能 拉毗：小红帽 7")
     if not query or len(query) > 100:
-        action = "技能" if skills else "角色"
-        raise CharacterError(f"用法：/nikke {action} 角色名" + (" [等级1–10]" if skills else ""))
+        raise CharacterError("用法：" + (SKILL_USAGE if skills else "/nikke 角色 角色名"))
     return query, level
 
 
@@ -113,7 +136,44 @@ def description(detail: dict, level: int, *, weapon=False) -> str:
 
 
 def validate(path: str, data):
-    if path == LIST_PATH:
+    if path == TREASURE_LIST_PATH:
+        ids = data.get("SSR") if isinstance(data, dict) else None
+        if (
+            not isinstance(ids, list) or len(ids) > 200
+            or any(type(item) is not int or item <= 0 for item in ids)
+            or len(set(ids)) != len(ids)
+        ):
+            raise CharacterError("官方珍藏品索引格式异常。")
+    elif match := re.fullmatch(r"equip/zh-tw/favorite_(\d+)\.json", path):
+        if (
+            not isinstance(data, dict) or type(data.get("id")) is not int
+            or data["id"] != int(match[1]) or data.get("favorite_rare") != "SSR"
+            or type(data.get("name_code")) is not int or data["name_code"] <= 0
+            or not isinstance(data.get("name_localkey"), str) or not data["name_localkey"]
+            or data.get("grade") != [1, 2, 3] or data.get("max_level") != 2
+        ):
+            raise CharacterError("官方珍藏品详情格式异常。")
+        groups = data.get("favoriteitem_skill_group_data")
+        if not isinstance(groups, list) or len(groups) != 3:
+            raise CharacterError("官方珍藏品技能阶段格式异常。")
+        slots = []
+        for group in groups:
+            if not isinstance(group, dict) or type(group.get("skill_change_slot")) is not int:
+                raise CharacterError("官方珍藏品技能槽位格式异常。")
+            slots.append(group["skill_change_slot"])
+            info = group.get("info")
+            if (
+                not isinstance(info, dict) or not isinstance(info.get("name_localkey"), str)
+                or not isinstance(info.get("description_localkey"), str)
+                or not isinstance(info.get("description_value_list"), list)
+            ):
+                raise CharacterError("官方珍藏品技能资料格式异常。")
+            # Reject incomplete data before caching or returning any skill page.
+            for level in range(1, 11):
+                description(info, level)
+        if set(slots) != {1, 2, 3}:
+            raise CharacterError("官方珍藏品技能槽位格式异常。")
+    elif path == LIST_PATH:
         if not isinstance(data, list) or not data:
             raise CharacterError("官方角色列表格式异常。")
         for row in data:
@@ -230,8 +290,46 @@ class CharacterCatalog:
             self.logger.warning("[NIKKE] 角色资料缓存写入失败")
         return data, now, False
 
+    async def _treasure(self, name_code: int):
+        index, index_time, index_stale = await self._load(TREASURE_LIST_PATH)
+        semaphore = asyncio.Semaphore(4)
+
+        async def load(item_id):
+            async with semaphore:
+                return await self._load(f"equip/zh-tw/favorite_{item_id}.json")
+
+        # The public index only lists item IDs, so resolve their character codes
+        # with bounded concurrency. Each detail reuses the 24-hour disk cache.
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*(load(item) for item in index["SSR"]), return_exceptions=True),
+                timeout=TREASURE_TIMEOUT,
+            )
+        except asyncio.TimeoutError as exc:
+            raise CharacterError("珍藏品资料读取超时，请稍后重试。") from exc
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+        matches = [
+            result for result in results
+            if not isinstance(result, BaseException) and result[0]["name_code"] == name_code
+        ]
+        if len(matches) > 1:
+            raise CharacterError("官方珍藏品角色关联存在歧义，暂时无法准确查询。")
+        if matches:
+            item, checked, stale = matches[0]
+            return item, min(checked, index_time), stale or index_stale
+        if any(isinstance(result, BaseException) for result in results):
+            raise CharacterError("部分珍藏品资料读取失败，暂时无法确认该角色的珍藏品，请稍后重试。")
+        note = "官方资料刷新失败，当前使用旧缓存。" if index_stale else ""
+        raise CharacterError(
+            note + "BlaBlaLink 当前资料未收录该角色的珍藏品，请查询基础技能或稍后重试。"
+        )
+
     async def query(self, query: str, *, skills=False) -> list[str]:
-        name, level = parse_query(query, skills)
+        name, level, phase = (
+            parse_skill_query(query) if skills else (*parse_query(query, False), 0)
+        )
         async with self.lock:
             rows, list_time, list_stale = await self._load(LIST_PATH)
             visible = [row for row in rows if row.get("is_visible", True)]
@@ -249,6 +347,22 @@ class CharacterCatalog:
             row = matches[0]
             data, checked, stale = await self._load(f"roledata/{row['resource_id']}-v2-zh-tw.json")
             checked = min(checked, list_time)
+            enhanced = {}
+            treasure_name = ""
+            if phase:
+                name_code = data.get("name_code")
+                if type(name_code) is not int or name_code <= 0:
+                    raise CharacterError("官方角色资料缺少珍藏品关联，暂时无法准确查询。")
+                treasure, item_time, item_stale = await self._treasure(name_code)
+                checked = min(checked, item_time)
+                stale = stale or item_stale
+                treasure_name = clean_text(treasure["name_localkey"])
+                # Source order is the upgrade order, NOT skill slot order.
+                # Diesel/Laplace unlock slots 2, 3, 1; Frima unlocks 1, 3, 2.
+                enhanced = {
+                    group["skill_change_slot"]: group["info"]
+                    for group in treasure["favoriteitem_skill_group_data"][:phase]
+                }
             stamp = datetime.fromtimestamp(checked, timezone(timedelta(hours=8))).strftime(
                 "%Y-%m-%d %H:%M"
             )
@@ -260,23 +374,30 @@ class CharacterCatalog:
                 footer = "\n官方资料刷新失败，以下使用本地旧缓存。" + footer
             if skills:
                 pages = []
-                for title, field in (
+                for slot, (title, field) in enumerate((
                     ("技能1", "skill1_detail"),
                     ("技能2", "skill2_detail"),
                     ("爆裂技能", "ulti_skill_detail"),
-                ):
-                    skill = data[field]
+                ), 1):
+                    # Favorite-item info omits the base cooldown in current data.
+                    skill = {**data[field], **enhanced.get(slot, {})}
                     cooldown = skill.get("skill_cooltime")
                     note = (
                         f" · 冷却 {hundredths(cooldown)} 秒"
                         if isinstance(cooldown, (int, float))
                         else ""
                     )
+                    state = (
+                        f"（珍藏品：{treasure_name}；阶段{phase}；"
+                        + ("本技能已强化）" if slot in enhanced else "本阶段未强化，沿用基础技能）")
+                        if phase else "（基础技能，未计珍藏品强化）"
+                    )
+                    stage = f"（珍藏品阶段{phase}）" if phase else ""
                     pages.append(
-                        f"【{clean_text(data['name_localkey'])} · {title} Lv.{level}】\n"
+                        f"【{clean_text(data['name_localkey'])} · {title} Lv.{level}{stage}】\n"
                         f"{clean_text(skill.get('name_localkey', title))}{note}\n"
                         + description(skill, level)
-                        + "\n（基础技能，未计珍藏品强化）"
+                        + "\n" + state
                         + footer
                     )
                 return pages
@@ -339,5 +460,5 @@ def format_profile(data: dict) -> str:
             + "："
             + clean_text(skill.get("name_localkey", "未知"))
         )
-    lines.append(f"详细技能：/nikke 技能 {name} [等级1–10，默认10]")
+    lines.append(f"详细技能：/nikke 技能 {name} [等级1–10，默认10] [珍藏品1–3]")
     return "\n".join(lines)

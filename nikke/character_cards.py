@@ -10,6 +10,11 @@ LINE_BUDGET = 72
 MAX_CARDS = 12
 BASE_NOTE = "（基础技能，未计珍藏品强化）"
 STALE_NOTE = "官方资料刷新失败，以下使用本地旧缓存。"
+PROJECT_FOOTER = (
+    "项目作者：@孤行花火\n"
+    "https://github.com/guxinghuahuo/astrbot_plugin_nikke\n"
+    "喜欢本插件的话，请为本项目添加一个Star吧OwO"
+)
 
 TEMPLATE = """<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -33,15 +38,17 @@ h2 { margin: 0 0 12px; color: #17675f; font-size: 22px; line-height: 1.5; }
   line-height: 1.65; }
 .footer { padding: 18px 28px 22px; background: #f5f8fb; color: #526579;
   font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
-.note { margin-bottom: 8px; color: #775c2d; }
+.notes { padding: 16px 28px 0; color: #775c2d; font-size: 16px; line-height: 1.7; }
+.note + .note { margin-top: 6px; }
 </style></head><body><article class="card">
 <header class="header"><div class="eyebrow">NIKKE · 妮姬资料</div>
 <h1>{{ title | e }}</h1><div class="subtitle">{{ subtitle | e }}
 {% if total > 1 %} · {{ number }} / {{ total }}{% endif %}</div></header>
+{% if notes %}<aside class="notes">{% for note in notes %}<div class="note">{{ note | e }}</div>
+{% endfor %}</aside>{% endif %}
 <main class="content">{% for section in sections %}<section>
 <h2>{{ section.heading | e }}</h2><div class="text">{{ section.text | e }}</div>
-</section>{% endfor %}</main><footer class="footer">{% for note in notes %}<div
-class="note">{{ note | e }}</div>{% endfor %}{{ footer | e }}</footer>
+</section>{% endfor %}</main><footer class="footer">{{ footer | e }}</footer>
 </article></body></html>"""
 
 
@@ -53,10 +60,10 @@ def line_cost(line):
 
 
 def build_cards(pages: list[str], *, subtitle="国际服 · 繁中转简体") -> list[dict]:
-    """Combine three skills, repeat common provenance once, paginate without truncation."""
+    """Combine skills, retain warnings and add the project footer on each card."""
     if not pages or sum(map(len, pages)) > 24000:
         raise ValueError("角色资料过长，暂时无法渲染图片。")
-    title, footer = "角色资料", ""
+    title = "角色资料"
     notes, sections, cards = [], [], []
     used = 0
 
@@ -69,10 +76,8 @@ def build_cards(pages: list[str], *, subtitle="国际服 · 繁中转简体") ->
             raise ValueError("角色资料过长，暂时无法渲染图片。")
 
     for index, page in enumerate(pages):
-        body, separator, source = page.rpartition("\n资料校验：")
-        if separator:
-            footer = "资料校验：" + source
-        else:
+        body, separator, _ = page.rpartition("\n资料校验：")
+        if not separator:
             body = page
         for note in (STALE_NOTE, BASE_NOTE):
             if note in body:
@@ -114,7 +119,7 @@ def build_cards(pages: list[str], *, subtitle="国际服 · 繁中转简体") ->
         card.update(
             title=title,
             subtitle=subtitle,
-            footer=footer,
+            footer=PROJECT_FOOTER,
             notes=notes,
             number=number,
             total=len(cards),

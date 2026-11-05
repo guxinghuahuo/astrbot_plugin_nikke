@@ -32,6 +32,15 @@ def test_normalization_and_edit_distance_boundaries():
     assert similarity("x" * 129, "x" * 129) == 0
 
 
+def test_treasure_commands_preserve_parameters_and_reject_ambiguous_stage_syntax():
+    for query in ("迪塞尔 珍藏品1", "拉普拉斯 7 珍藏品3"):
+        result = check("nikke 技能 " + query)
+        assert result.command == "nikke 技能 " + query and not result.message
+    for query in ("迪塞尔 珍藏品", "迪塞尔 珍藏品4", "迪塞尔 珍藏品3 7"):
+        result = check("nikke 技能 " + query)
+        assert not result.command and "[珍藏品1–3]" in result.message
+
+
 def test_exact_normalized_and_unique_high_score_names():
     for text in (
         "nikke 最新 NIKKE国际服",

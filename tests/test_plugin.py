@@ -1419,8 +1419,54 @@ def test_tool_validates_dates_before_reading_and_handles_no_tools(plugin_class):
 
 def test_skill_tool_registration_uses_supported_docstring_types(plugin_class):
     assert plugin_class.query_character_skills.tool_registration == (
-        "nikke_query_character_skills", {"character_name": "string", "skill_level": "number"}
+        "nikke_query_character_skills",
+        {"character_name": "string", "skill_level": "number", "treasure_phase": "number"},
     )
+
+
+@pytest.mark.parametrize("level,phase", [(10, 1), (7, 2), (10, 3)])
+def test_treasure_command_and_model_tool_share_query(plugin_class, level, phase):
+    async def scenario():
+        plugin = plugin_class(context(), {"character_skills_tool_enabled": True})
+        await plugin.initialize()
+        try:
+            pages = [f"【迪塞尔 · 技能1 Lv.{level}（珍藏品阶段{phase}）】\n本技能已强化"]
+            plugin.characters.query = AsyncMock(return_value=pages)
+            query = "迪塞尔" + (f" {level}" if level != 10 else "") + f" 珍藏品{phase}"
+            event = FakeEvent(admin=False)
+            await preflight_dispatch(plugin, event, "nikke 技能 " + query)
+            plugin.characters.query.assert_awaited_once_with(query, skills=True)
+            assert event.replies == pages and event.stopped and not event.call_llm
+            assert event.get_extra("nikke_character_query") is None
+            plugin.characters.query.reset_mock()
+            tool_event = FakeEvent()
+            result = await plugin.query_character_skills(tool_event, "迪塞尔", level, float(phase))
+            plugin.characters.query.assert_awaited_once_with(
+                f"迪塞尔 {level} 珍藏品{phase}", skills=True
+            )
+            assert json.loads(result.split("\n")[-1]) == {"skills": pages}
+            assert not tool_event.stopped and not tool_event.replies
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", [-1, 4, 1.5, True, None, "3", float("nan"), float("inf")])
+def test_skill_tool_rejects_invalid_treasure_phase_before_fetching(plugin_class, phase):
+    async def scenario():
+        plugin = plugin_class(context(), {"character_skills_tool_enabled": True})
+        await plugin.initialize()
+        try:
+            plugin.characters.query = AsyncMock()
+            assert "珍藏品阶段须为" in await plugin.query_character_skills(
+                FakeEvent(), "迪塞尔", 10, phase
+            )
+            plugin.characters.query.assert_not_awaited()
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("group", ["100", "", "unsubscribed"])
