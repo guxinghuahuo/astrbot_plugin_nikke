@@ -30,7 +30,7 @@ class CalendarService:
     ):
         self.settings, self.store, self.sender, self.logger = settings, store, sender, logger
         self.clock, self.random_uniform = clock, random_uniform
-        self.client = client if client is not None else CalendarClient()
+        self.client = client if client is not None else CalendarClient(logger=logger)
         self.fetch_lock = asyncio.Lock()
         self.delivery_lock = asyncio.Lock()
         self.planned_at = float("-inf")

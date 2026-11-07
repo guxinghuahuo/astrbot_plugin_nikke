@@ -74,7 +74,7 @@ class NikkePlugin(Star):
             data_dir / "characters", logger, proxy=settings.official_image_proxy
         )
         store = await asyncio.to_thread(Store, data_dir / "subscriptions.sqlite3")
-        client = RSSClient(official_image_proxy=settings.official_image_proxy)
+        client = RSSClient(official_image_proxy=settings.official_image_proxy, logger=logger)
         content_filter = ContentFilter(self.context, settings, store, logger)
         image_matcher = ImageMatcher(self.context, settings, store, logger)
         translator = Translator(self.context, settings, store, client, logger)
@@ -96,7 +96,7 @@ class NikkePlugin(Star):
             self.service = None
             raise
         logger.info(
-            "[NIKKE] 插件 v1.3.2 已加载，自动推送=%s，检查间隔=%s±%s 秒",
+            "[NIKKE] 插件 v1.3.3 已加载，自动推送=%s，检查间隔=%s±%s 秒",
             settings.enabled,
             settings.interval,
             settings.jitter,

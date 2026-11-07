@@ -10,6 +10,7 @@ import aiohttp
 
 from .chinese import simplified
 from .feed import FeedError
+from .network import OfficialRequestDiagnostics, request_error_reason
 
 CALENDAR_URL = "https://api.blablalink.com/api/ugc/direct/standalonesite/Dynamics/GetCalendarDetail"
 CALENDAR_LINK = "https://www.blablalink.com/activity-calendar"
@@ -200,6 +201,9 @@ def reminder_pages(rows: list[dict], now: float, updated: float, limit=3000):
 
 
 class CalendarClient:
+    def __init__(self, *, logger=None):
+        self.logger = logger
+
     async def fetch(self) -> tuple[dict, list[CalendarEvent]]:
         common = {
             "game_id": "16",
@@ -221,6 +225,7 @@ class CalendarClient:
             "x-language": "zh-TW",
             "x-common-params": json.dumps(common, separators=(",", ":")),
         }
+        diagnostic = OfficialRequestDiagnostics(self.logger, "官方日历", CALENDAR_URL)
         try:
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=20, connect=5),
@@ -230,16 +235,19 @@ class CalendarClient:
                 async with session.post(
                     CALENDAR_URL, json={}, headers=headers, allow_redirects=False
                 ) as response:
+                    raw = await diagnostic.read(response, MAX_BYTES)
                     if response.status != 200:
                         raise FeedError(f"官方日历 HTTP {response.status}")
-                    raw = bytearray()
-                    async for chunk in response.content.iter_chunked(65536):
-                        raw.extend(chunk)
-                        if len(raw) > MAX_BYTES:
-                            raise FeedError("日历响应超过 4 MiB")
+            diagnostic.stage = "JSON 解码"
             payload = json.loads(raw)
+            diagnostic.stage = "业务数据解析"
             return payload, normalise(payload)
-        except FeedError:
+        except Exception as exc:
+            diagnostic.failure(exc)
+            if isinstance(exc, FeedError):
+                raise
+            if isinstance(
+                exc, (aiohttp.ClientError, asyncio.TimeoutError, ValueError, UnicodeError)
+            ):
+                raise FeedError("官方日历" + request_error_reason(exc)) from exc
             raise
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, UnicodeError) as exc:
-            raise FeedError("官方日历网络请求或解析失败") from exc

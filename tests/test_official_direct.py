@@ -82,6 +82,19 @@ def test_empty_conflicting_duplicates_and_business_errors():
             normalize(payload, "en")
 
 
+def test_official_json_controls_do_not_break_internal_xml_bridge():
+    payload = {"code": 0, "data": {"list": [post(
+        title="公告\x0b更新😀", content="<p>第一行\x0b第二行\x00结束</p>",
+        user={"username": "官方\uffff账号"},
+    )]}}
+    entry, = normalize(payload, "zh-TW")
+    assert entry.title == "公告\n更新😀"
+    assert entry.text == "第一行\n第二行\n结束"
+    assert entry.author == "官方\n账号"
+    assert entry.id.endswith("9223372036854775807")
+    assert entry.images == tuple(payload["data"]["list"][0]["pic_urls"])
+
+
 def test_shared_address_and_switch_preserve_delivery_state(tmp_path):
     sub = {"source": "blablalink", "name": "国际", "enabled": True,
            "language": "en", "targets": ["qq:GroupMessage:1"]}

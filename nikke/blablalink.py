@@ -13,10 +13,12 @@ import aiohttp
 
 from .config import OFFICIAL_LANGUAGES, OFFICIAL_OPENID
 from .feed import MAX_FEED_BYTES, FeedError, parse_feed, web_url
+from .network import OfficialRequestDiagnostics, request_error_reason
 
 ENDPOINT = (
     "https://api.blablalink.com/api/ugc/direct/standalonesite/Dynamics/GetUserPostList"
 )
+XML_INVALID = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 
 
 def request_data(language):
@@ -114,7 +116,9 @@ def normalize(payload, language):
         node = SubElement(channel, "item")
         for key, value in item.items():
             if key != "published":
-                SubElement(node, key).text = value
+                # JSON permits controls (notably U+000B in official posts) that XML 1.0
+                # forbids. Preserve word boundaries when bridging to our RSS parser.
+                SubElement(node, key).text = XML_INVALID.sub("\n", value)
         if item["published"] is not None:
             SubElement(node, "pubDate").text = format_datetime(
                 datetime.fromtimestamp(item["published"], timezone.utc), usegmt=True
@@ -131,18 +135,25 @@ async def fetch_official(client, url):
     ):
         raise FeedError("国际服直连接口标识无效")
     headers, body = request_data(language)
+    diagnostic = OfficialRequestDiagnostics(
+        client.logger, "官方动态/" + language, ENDPOINT
+    )
     try:
         async with client.session.post(
             ENDPOINT, json=body, headers=headers, allow_redirects=False,
             timeout=aiohttp.ClientTimeout(total=30, connect=10),
         ) as response:
+            raw = await diagnostic.read(response, MAX_FEED_BYTES)
             if response.status != 200:
                 raise FeedError(f"官方动态 HTTP {response.status}")
-            raw = await client._read(response, MAX_FEED_BYTES)
-        return await asyncio.to_thread(
-            lambda: normalize(json.loads(raw.decode("utf-8")), language)
-        )
-    except FeedError:
+        diagnostic.stage = "JSON 解码"
+        payload = json.loads(raw.decode("utf-8"))
+        diagnostic.stage = "业务数据解析"
+        return await asyncio.to_thread(normalize, payload, language)
+    except Exception as exc:
+        diagnostic.failure(exc)
+        if isinstance(exc, FeedError):
+            raise
+        if isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError, ValueError, UnicodeError)):
+            raise FeedError("官方动态" + request_error_reason(exc)) from exc
         raise
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, UnicodeError) as exc:
-        raise FeedError("官方动态网络请求或解析失败") from exc

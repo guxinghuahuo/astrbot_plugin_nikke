@@ -6,7 +6,7 @@
 
 **把妮姬资讯、角色技能与珍藏品查询，带进你的群聊。**
 
-[![Version](https://img.shields.io/badge/版本-v1.3.2-17675f?style=for-the-badge)](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.3.2)
+[![Version](https://img.shields.io/badge/版本-v1.3.3-17675f?style=for-the-badge)](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.3.3)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.10.4-182e48?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![OneBot](https://img.shields.io/badge/OneBot-v11-52b7a5?style=for-the-badge)](#环境与配置)
 [![License](https://img.shields.io/badge/License-MIT-758394?style=for-the-badge)](LICENSE)
@@ -57,7 +57,7 @@
 https://github.com/guxinghuahuo/astrbot_plugin_nikke
 ```
 
-离线安装可从 [v1.3.2 发布页](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.3.2) 下载 `astrbot_plugin_nikke-v1.3.2.zip`，在插件管理页上传。依赖由 AstrBot 安装。
+离线安装可从 [v1.3.3 发布页](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.3.3) 下载 `astrbot_plugin_nikke-v1.3.3.zip`，在插件管理页上传。依赖由 AstrBot 安装。
 
 ### 2. 直接查询
 
