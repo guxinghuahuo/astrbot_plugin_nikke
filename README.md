@@ -6,7 +6,7 @@
 
 **把妮姬资讯、角色技能与珍藏品查询，带进你的群聊。**
 
-[![Version](https://img.shields.io/badge/版本-v1.3.3-17675f?style=for-the-badge)](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.3.3)
+[![Version](https://img.shields.io/badge/版本-v1.4.0-17675f?style=for-the-badge)](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.4.0)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.10.4-182e48?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![OneBot](https://img.shields.io/badge/OneBot-v11-52b7a5?style=for-the-badge)](#环境与配置)
 [![License](https://img.shields.io/badge/License-MIT-758394?style=for-the-badge)](LICENSE)
@@ -43,7 +43,7 @@
 | 基地与红球 | 按基地等级或普通、困难通关进度，查询每小时资源产出 |
 | 官方资讯 | 订阅 bilibili 国服及 BlaBlaLink 繁中、英、日、韩国际服动态 |
 | 群聊图文 | 发送正文、原链接、逐张原图和视频封面，支持去重、重试及图片续传 |
-| 翻译与筛选 | 可选国际服翻译、bilibili 大模型筛选及 Jev 前置判断 |
+| 翻译与筛选 | 可选国际服翻译、bilibili 抽奖筛选、国际服线下活动过滤及统一判断模型 |
 | 活动提醒 | 活动截止倒计时、分档提醒和夜间汇总 |
 | 模型工具 | 让聊天模型按需查询角色技能、珍藏品及本群官方资讯存档 |
 
@@ -57,7 +57,7 @@
 https://github.com/guxinghuahuo/astrbot_plugin_nikke
 ```
 
-离线安装可从 [v1.3.3 发布页](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.3.3) 下载 `astrbot_plugin_nikke-v1.3.3.zip`，在插件管理页上传。依赖由 AstrBot 安装。
+离线安装可从 [v1.4.0 发布页](https://github.com/guxinghuahuo/astrbot_plugin_nikke/releases/tag/v1.4.0) 下载 `astrbot_plugin_nikke-v1.4.0.zip`，在插件管理页上传。依赖由 AstrBot 安装。
 
 ### 2. 直接查询
 
@@ -193,3 +193,5 @@ python scripts/build_package.py
 感谢 [AstrBot](https://github.com/AstrBotDevs/AstrBot)、[RSSHub](https://github.com/DIYgod/RSSHub) 和 [OpenCC](https://github.com/BYVoid/OpenCC)。README 排版参考了 [群聊日常分析插件](https://github.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis)。
 
 代码采用 [MIT](LICENSE) 许可证；内置 OpenCC 实现与词典遵循其 [许可证](nikke/_vendor/opencc/LICENSE.txt) 和 [NOTICE](nikke/_vendor/opencc/NOTICE.txt)。NIKKE 商标、官方内容及图像归各自权利人所有，本项目为社区工具。
+
+判断模型通过统一配置支持 Jev、Gemini、AstrBot 及 custom，国际服支持线下活动过滤，详见[接入说明](docs/decision-models.md)。

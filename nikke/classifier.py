@@ -5,11 +5,11 @@ import hashlib
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .config import Settings, Subscription
 from .feed import Entry, FeedError
-from .jev import CACHE_SECONDS, JevResult, evaluate
+from .jev import CACHE_SECONDS, JevResult, evaluate, evaluate_framework
 from .jev import POLICY_VERSION as JEV_POLICY_VERSION
 from .store import Store
 
@@ -91,12 +91,23 @@ class ContentFilter:
         self.jev_retry_at = 0
 
     async def assess(self, sub: Subscription, entry: Entry) -> Decision:
-        if sub.source == "blablalink":
-            return Decision("disabled", "国际服官方动态直接推送，跳过全部内容筛选")
-        if not self.settings.ai_filter_enabled:
+        settings = self.settings
+        international = sub.source == "blablalink"
+        use_precheck = (
+            settings.default_international_policy if international else settings.default_llm_policy
+        )
+        if international:
+            settings = replace(
+                settings,
+                llm_system_prompt=settings.international_system_prompt,
+                llm_categories=settings.international_categories,
+                jev_instructions=settings.international_instructions,
+                jev_criteria=settings.international_criteria,
+            )
+        if not settings.ai_filter_enabled:
             return Decision("disabled", "AI 筛选已关闭")
         current, quoted, is_repost = split_post(entry.text[:12000])
-        if self.settings.default_llm_policy and obvious_winner_notice(current):
+        if not international and settings.default_llm_policy and obvious_winner_notice(current):
             decision = Decision(
                 "giveaway_result", "本次正文明确恭喜中奖并通知提交领奖信息，忽略引用旧文的资讯"
             )
@@ -117,19 +128,19 @@ class ContentFilter:
             },
             ensure_ascii=False,
         )
-        if self.settings.jev_filter_enabled and self.settings.default_llm_policy:
-            decision = await self._jev_precheck(sub, entry, payload)
+        if settings.jev_filter_enabled and use_precheck:
+            decision = await self._jev_precheck(sub, entry, payload, settings)
             if decision is not None:
                 return decision
         # Resolve the LLM only after Jev: confident normal posts need no provider.
         try:
-            provider = self.settings.ai_provider_id
+            provider = settings.ai_provider_id
             if not provider:
                 if not sub.targets:
                     raise FeedError("请指定 AI 模型提供商 ID 或配置目标群")
                 provider = await asyncio.wait_for(
                     self.context.get_current_chat_provider_id(umo=sub.targets[0]),
-                    timeout=self.settings.ai_timeout,
+                    timeout=settings.ai_timeout,
                 )
         except FeedError:
             raise
@@ -143,17 +154,15 @@ class ContentFilter:
                     sub.key,
                     entry.id,
                     payload,
-                    self.settings.classification_prompt,
-                    self.settings.blocked_categories,
+                    settings.classification_prompt,
+                    settings.blocked_categories,
                 ]
             ).encode()
         ).hexdigest()
         async with self.lock:
             cached = await asyncio.to_thread(self.store.filter_result, key)
             if cached is not None:
-                return Decision(
-                    cached["category"], cached["reason"], self.settings.blocked_categories
-                )
+                return Decision(cached["category"], cached["reason"], settings.blocked_categories)
             if self.failed_until.get(key, 0) > self.clock():
                 raise FeedError("AI 筛选暂不可用，此条动态将在稍后重试")
             try:
@@ -162,17 +171,17 @@ class ContentFilter:
                     self.context.llm_generate(
                         chat_provider_id=provider,
                         prompt=payload,
-                        system_prompt=self.settings.classification_prompt,
+                        system_prompt=settings.classification_prompt,
                         contexts=[],
                         tools=None,
                         max_tokens=256,
                     ),
-                    timeout=self.settings.ai_timeout,
+                    timeout=settings.ai_timeout,
                 )
                 decision = parse_decision(
                     response.completion_text,
-                    tuple(self.settings.categories),
-                    self.settings.blocked_categories,
+                    tuple(settings.categories),
+                    settings.blocked_categories,
                 )
             except Exception as exc:
                 self.failed_until[key] = self.clock() + 60
@@ -199,34 +208,50 @@ class ContentFilter:
             )
             return decision
 
-    async def _jev_precheck(self, sub: Subscription, entry: Entry, payload: str) -> Decision | None:
+    async def _jev_precheck(
+        self, sub: Subscription, entry: Entry, payload: str, settings=None
+    ) -> Decision | None:
+        settings = settings or self.settings
         key = hashlib.sha256(
             json.dumps(
                 [
                     JEV_POLICY_VERSION,
-                    self.settings.jev_model,
+                    settings.decision_backend,
+                    settings.decision_protocol,
+                    settings.decision_provider_id,
+                    settings.jev_api_base,
+                    settings.gemini_decision_api_base,
+                    settings.gemini_decision_model,
+                    settings.jev_model,
                     sub.key,
                     entry.id,
                     payload,
-                    self.settings.jev_instructions,
-                    json.loads(self.settings.jev_criteria),
+                    settings.jev_instructions,
+                    json.loads(settings.jev_criteria),
                 ]
             ).encode()
         ).hexdigest()
         async with self.lock:
             try:
                 cached = await asyncio.to_thread(self.store.jev_result, key)
+                # Framework providers may change their model behind the same ID.
+                if settings.decision_backend == "astrbot":
+                    cached = None
                 if cached and 0 <= self.clock() - cached["created_at"] <= CACHE_SECONDS:
                     result = JevResult(cached["choice"], cached["confidence"], cached["model"])
                 elif self.clock() < self.jev_retry_at:
                     self.logger.info(
-                        "[NIKKE] Jev 暂缓请求，转交大模型：订阅=%s，动态=%s", sub.name, entry.id
+                        "[NIKKE] 判断模型 暂缓请求，转交大模型：订阅=%s，动态=%s",
+                        sub.name,
+                        entry.id,
                     )
                     return None
                 else:
                     result = await asyncio.wait_for(
-                        self.jev_evaluator(self.settings, json.loads(payload)),
-                        timeout=self.settings.jev_timeout,
+                        evaluate_framework(self.context, settings, json.loads(payload))
+                        if settings.decision_backend == "astrbot"
+                        else self.jev_evaluator(settings, json.loads(payload)),
+                        timeout=settings.jev_timeout,
                     )
                     await asyncio.to_thread(
                         self.store.save_jev_result,
@@ -242,28 +267,39 @@ class ContentFilter:
                 # Exception messages or HTTP bodies may contain credentials.
                 status = getattr(exc, "status", None)
                 self.logger.warning(
-                    "[NIKKE] Jev 请求或结果异常，转交大模型：异常类型=%s，HTTP=%s",
+                    "[NIKKE] 判断模型 请求或结果异常，转交大模型：异常类型=%s，HTTP=%s",
                     type(exc).__name__,
                     status if type(status) is int else "无",
                 )
                 return None
+            if (
+                sub.source == "blablalink"
+                and result.choice == "offline"
+                and result.confidence >= settings.jev_confidence_threshold
+            ):
+                self.logger.info(
+                    "[NIKKE] 判断模型过滤线下活动：订阅=%s，动态=%s，置信度=%.4f",
+                    sub.name,
+                    entry.id,
+                    result.confidence,
+                )
+                return Decision("offline", "判断模型高置信度判为仅线下活动", ("offline",))
             passed = (
-                result.choice == "normal"
-                and result.confidence >= self.settings.jev_confidence_threshold
+                result.choice == "normal" and result.confidence >= settings.jev_confidence_threshold
             )
             self.logger.info(
-                "[NIKKE] Jev 判定：订阅=%s，动态=%s，分类=%s，置信度=%.4f，阈值=%.4f，处理=%s",
+                "[NIKKE] 判断模型 判定：订阅=%s，动态=%s，分类=%s，置信度=%.4f，阈值=%.4f，处理=%s",
                 sub.name,
                 entry.id,
                 result.choice,
                 result.confidence,
-                self.settings.jev_confidence_threshold,
+                settings.jev_confidence_threshold,
                 "直接放行" if passed else "转交大模型",
             )
             if passed:
                 return Decision(
                     "news",
-                    f"Jev 判定正常，置信度 {result.confidence:.4f} 达到阈值 "
-                    f"{self.settings.jev_confidence_threshold:.4f}，跳过大模型",
+                    f"判断模型判定正常，置信度 {result.confidence:.4f} 达到阈值 "
+                    f"{settings.jev_confidence_threshold:.4f}，跳过大模型",
                 )
             return None

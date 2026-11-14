@@ -6,7 +6,16 @@ from hashlib import sha256
 from urllib.parse import urlsplit
 
 from .network import image_proxy_url
-from .prompts import CATEGORIES_JSON, JEV_CRITERIA_JSON, JEV_INSTRUCTIONS, SYSTEM_PROMPT
+from .prompts import (
+    CATEGORIES_JSON,
+    INTERNATIONAL_CATEGORIES_JSON,
+    INTERNATIONAL_CRITERIA_JSON,
+    INTERNATIONAL_SYSTEM_PROMPT,
+    JEV_CRITERIA_JSON,
+    JEV_INSTRUCTIONS,
+    ONLINE_POLICY,
+    SYSTEM_PROMPT,
+)
 
 OFFICIAL_OPENID = "29080-8468458281233829111"
 OFFICIAL_LANGUAGES = {"zh-TW": "繁中官方", "en": "全球英文官方", "ja": "日本官方", "ko": "韩国官方"}
@@ -32,13 +41,58 @@ GROUP_FIELDS = {
         "jev_confidence_threshold",
         "jev_model",
         "jev_timeout_seconds",
+        "decision_backend",
+        "decision_provider_id",
+        "jev_api_base",
+        "gemini_decision_token",
+        "gemini_decision_api_base",
+        "gemini_decision_model",
+        "decision_token",
+        "decision_api_base",
+        "decision_model",
+        "decision_protocol",
+        "_decision_config_version",
     ),
     "chat_tools": (
-        "chat_context_enabled", "chat_context_days", "chat_context_max_chars",
+        "chat_context_enabled",
+        "chat_context_days",
+        "chat_context_max_chars",
         "character_skills_tool_enabled",
     ),
 }
 GROUP_LABELS = {"base": "基础配置", "ai_filter": "AI 内容筛选", "chat_tools": "聊天查询工具"}
+
+
+def migrate_decision(section: dict) -> bool:
+    if section.get("_decision_config_version") == 1:
+        return False
+    if not any(
+        k in section
+        for k in (
+            "decision_backend",
+            "jev_token",
+            "gemini_decision_token",
+            "decision_token",
+            "jev_api_base",
+            "jev_model",
+            "gemini_decision_api_base",
+            "gemini_decision_model",
+        )
+    ):
+        return False
+    prefix = "gemini_decision_" if section.get("decision_backend") == "gemini" else "jev_"
+    if (
+        "decision_model" not in section
+        and prefix + "model" in section
+        and not str(section[prefix + "model"]).strip()
+    ):
+        raise ValueError("旧判断模型名称不能为空")
+    for name, old in (("token", "token"), ("api_base", "api_base"), ("model", "model")):
+        key = "decision_" + name
+        if not section.get(key):
+            section[key] = section.get(prefix + old, "")
+    section["_decision_config_version"] = 1
+    return True
 
 
 def migrate_layout(config: dict) -> bool:
@@ -51,7 +105,9 @@ def migrate_layout(config: dict) -> bool:
     section = config.get("base", {})
     if isinstance(section, dict):
         for old_key in (
-            "international_source", "bilibili_rsshub_base_url", "international_rsshub_base_url"
+            "international_source",
+            "bilibili_rsshub_base_url",
+            "international_rsshub_base_url",
         ):
             if old_key in section or old_key in config:
                 value = section.pop(old_key, config.get(old_key))
@@ -64,7 +120,7 @@ def migrate_layout(config: dict) -> bool:
         if changed:
             config["base"] = section
     if config.get("_layout_version") == 1:
-        return changed
+        return migrate_decision(config.setdefault("ai_filter", {})) or changed
     grouped = {}
     for group, fields in GROUP_FIELDS.items():
         section = config.get(group, {})
@@ -79,6 +135,7 @@ def migrate_layout(config: dict) -> bool:
         for key in fields:
             config.pop(key, None)
     config["_layout_version"] = 1
+    migrate_decision(config["ai_filter"])
     return True
 
 
@@ -340,6 +397,23 @@ class Settings:
     translation: TranslationSettings = field(default_factory=TranslationSettings)
     character_image_enabled: bool = False
     character_skills_tool_enabled: bool = False
+    decision_backend: str = "jev"
+    decision_provider_id: str = ""
+    jev_api_base: str = ""
+    gemini_decision_token: str = field(default="", repr=False)
+    gemini_decision_api_base: str = ""
+    gemini_decision_model: str = "gemini-decision-1"
+    decision_protocol: str = "systemone"
+    international_system_prompt: str = INTERNATIONAL_SYSTEM_PROMPT
+    international_categories: str = INTERNATIONAL_CATEGORIES_JSON
+    international_instructions: str = ONLINE_POLICY
+    international_criteria: str = INTERNATIONAL_CRITERIA_JSON
+
+    @property
+    def default_international_policy(self) -> bool:
+        return self.international_system_prompt == INTERNATIONAL_SYSTEM_PROMPT and json.loads(
+            self.international_categories
+        ) == json.loads(INTERNATIONAL_CATEGORIES_JSON)
 
     @property
     def default_llm_policy(self) -> bool:
@@ -370,49 +444,33 @@ class Settings:
     @classmethod
     def from_dict(cls, config: dict, *, qq_platform_ids: tuple[str, ...] = ()) -> "Settings":
         config = flatten_config(config)
+        migrate_decision(config)
+        protocol = str(config.get("decision_protocol", "systemone"))
+        if protocol not in ("systemone", "gemini"):
+            raise ValueError("自定义判断模型协议须为 systemone 或 gemini")
+        kind = config.get("decision_backend", "jev")
+        gemini = kind == "gemini" or (kind == "custom" and protocol == "gemini")
+        for prefix in ("jev_", "gemini_decision_"):
+            config[prefix + "token"] = config.get("decision_token", "")
+            config[prefix + "api_base"] = config.get("decision_api_base", "")
+        selected_model = config.get("decision_model", "")
+        config["jev_model"] = (selected_model or "jev-latest") if not gemini else "jev-latest"
+        config["gemini_decision_model"] = (
+            (selected_model or "gemini-decision-1") if gemini else "gemini-decision-1"
+        )
+        if kind == "custom" and not config.get("decision_api_base"):
+            raise ValueError("custom 模式须填写判断模型 API Base 或完整接口地址")
         templates = config.get("prompt_templates", {})
         if not isinstance(templates, dict):
             raise ValueError("提示词模板必须是配置对象")
-        llm = templates.get("llm", {})
-        jev = templates.get("jev", {})
-        if not isinstance(llm, dict) or not isinstance(jev, dict):
-            raise ValueError("大模型和 Jev 提示词模板必须是配置对象")
-        prompt_values = []
-        for section, key, default in (
-            (llm, "llm_system_prompt", SYSTEM_PROMPT),
-            (llm, "llm_categories", CATEGORIES_JSON),
-            (jev, "jev_instructions", JEV_INSTRUCTIONS),
-            (jev, "jev_criteria", JEV_CRITERIA_JSON),
-        ):
-            value = section.get(key, default)
-            if not isinstance(value, str) or not value.strip() or len(value) > 20000:
-                raise ValueError(f"{key} 必须为非空文本，最多 20000 字符")
-            prompt_values.append(value)
-        if "${classification_rules}" not in prompt_values[0]:
-            raise ValueError("大模型提示词必须保留 ${classification_rules} 占位符")
-        try:
-            categories = json.loads(prompt_values[1])
-            criteria = json.loads(prompt_values[3])
-        except ValueError as exc:
-            raise ValueError("分类条件必须为有效 JSON 对象") from exc
-        if not isinstance(categories, dict) or not 1 <= len(categories) <= 20:
-            raise ValueError("大模型分类条件必须包含 1 至 20 个类别")
-        for key, value in categories.items():
-            if (
-                not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", key)
-                or not isinstance(value, dict)
-                or set(value) != {"description", "filter"}
-                or not isinstance(value["description"], str)
-                or not value["description"].strip()
-                or type(value["filter"]) is not bool
-            ):
-                raise ValueError("类别须使用小写英文标识，包含非空 description 和布尔 filter")
-        if (
-            not isinstance(criteria, dict)
-            or set(criteria) != {"normal", "lottery", "uncertain"}
-            or any(not isinstance(v, str) or not v.strip() for v in criteria.values())
-        ):
-            raise ValueError("Jev 分类条件必须包含 normal、lottery、uncertain 三项非空说明")
+        prompt_values = read_filter_templates(
+            templates.get("llm", {}), templates.get("jev", {}), international=False
+        )
+        international_values = read_filter_templates(
+            templates.get("international_llm", {}),
+            templates.get("international_decision", {}),
+            international=True,
+        )
         base = str(config.get("rsshub_base_url", "http://localhost:1200")).rstrip("/")
         international_direct = config.get("international_direct", True)
         if type(international_direct) is not bool:
@@ -423,9 +481,14 @@ class Settings:
         except ValueError as exc:
             raise ValueError("RSSHub 地址格式无效") from exc
         if (
-            parsed.scheme not in ("http", "https") or not parsed.hostname
-            or parsed.username or parsed.password or parsed.query or parsed.fragment
-            or port is not None and not 1 <= port <= 65535
+            parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or port is not None
+            and not 1 <= port <= 65535
         ):
             raise ValueError("RSSHub 地址应为不含账号、查询参数和片段的 HTTP(S) 地址")
         try:
@@ -453,9 +516,44 @@ class Settings:
         if not 10 <= ai_timeout <= 120:
             raise ValueError("AI 筛选超时必须为 10 至 120 秒")
         jev_enabled = bool(config.get("jev_filter_enabled", False))
+        backend = str(config.get("decision_backend", "jev")).strip()
+        if backend not in ("jev", "astrbot", "gemini", "custom"):
+            raise ValueError("判断模型接入方式须为 jev、astrbot、gemini 或 custom")
+        bases = []
+        for key in ("jev_api_base", "gemini_decision_api_base"):
+            value = str(config.get(key, "")).strip().rstrip("/")
+            try:
+                parsed = urlsplit(value)
+                if value and (
+                    parsed.scheme not in ("http", "https")
+                    or not parsed.hostname
+                    or parsed.username
+                    or parsed.password
+                    or parsed.query
+                    or parsed.fragment
+                    or any(c.isspace() for c in value)
+                ):
+                    raise ValueError()
+                parsed.port
+            except ValueError:
+                raise ValueError(
+                    "判断模型 API Base 须为不含凭据、查询参数的 HTTP(S) 地址"
+                ) from None
+            bases.append(value)
+        gemini_token = str(config.get("gemini_decision_token", "")).strip()
+        gemini_model = str(config.get("gemini_decision_model", "gemini-decision-1")).strip()
+        if not gemini_model or len(gemini_model) > 128 or any(c.isspace() for c in gemini_model):
+            raise ValueError("Gemini 判断模型 ID 无效")
+        if jev_enabled and gemini and (not gemini_token or any(c.isspace() for c in gemini_token)):
+            raise ValueError("启用 Gemini 判断时须填写有效 API Key")
         raw_token = config.get("jev_token", "")
         jev_token = raw_token.strip() if isinstance(raw_token, str) else ""
-        if jev_enabled and (not jev_token or any(c.isspace() for c in jev_token)):
+        if (
+            jev_enabled
+            and backend != "astrbot"
+            and not gemini
+            and (not jev_token or any(c.isspace() for c in jev_token))
+        ):
             raise ValueError("启用 Jev 过滤时须填写有效的 Jev Token（不含空白字符）")
         raw_threshold = config.get("jev_confidence_threshold", 0.8)
         try:
@@ -583,4 +681,73 @@ class Settings:
             TranslationSettings.from_dict(config.get("translation", {})),
             bool(config.get("character_image_enabled", False)),
             bool(config.get("character_skills_tool_enabled", False)),
+            backend,
+            str(config.get("decision_provider_id", "")).strip(),
+            bases[0],
+            gemini_token,
+            bases[1],
+            gemini_model,
+            protocol,
+            *international_values,
         )
+
+
+def read_filter_templates(llm: dict, decision: dict, *, international: bool) -> list[str]:
+    """Validate source-specific templates without changing saved legacy fields."""
+    if not isinstance(llm, dict) or not isinstance(decision, dict):
+        raise ValueError("大模型和判断模型提示词模板必须是配置对象")
+    defaults = (
+        (
+            INTERNATIONAL_SYSTEM_PROMPT,
+            INTERNATIONAL_CATEGORIES_JSON,
+            ONLINE_POLICY,
+            INTERNATIONAL_CRITERIA_JSON,
+        )
+        if international
+        else (SYSTEM_PROMPT, CATEGORIES_JSON, JEV_INSTRUCTIONS, JEV_CRITERIA_JSON)
+    )
+    keys = (
+        (
+            "international_system_prompt",
+            "international_categories",
+            "international_instructions",
+            "international_criteria",
+        )
+        if international
+        else ("llm_system_prompt", "llm_categories", "jev_instructions", "jev_criteria")
+    )
+    values = []
+    for section, key, default in zip((llm, llm, decision, decision), keys, defaults):
+        value = section.get(key, default)
+        if not isinstance(value, str) or not value.strip() or len(value) > 20000:
+            raise ValueError(f"{key} 必须是非空文本，最多 20000 字符")
+        values.append(value)
+    if "${classification_rules}" not in values[0]:
+        raise ValueError("大模型提示词必须保留 ${classification_rules} 占位符")
+    try:
+        categories = json.loads(values[1])
+        criteria = json.loads(values[3])
+    except ValueError as exc:
+        raise ValueError("分类条件必须为有效 JSON 对象") from exc
+    if not isinstance(categories, dict) or not 1 <= len(categories) <= 20:
+        raise ValueError("大模型分类条件必须包含 1 至 20 个类别")
+    for key, value in categories.items():
+        if (
+            not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", key)
+            or not isinstance(value, dict)
+            or set(value) != {"description", "filter"}
+            or not isinstance(value["description"], str)
+            or not value["description"].strip()
+            or type(value["filter"]) is not bool
+        ):
+            raise ValueError("类别须使用小写英文标识，包含非空 description 和布尔 filter")
+    expected = {"normal", "offline" if international else "lottery", "uncertain"}
+    if (
+        not isinstance(criteria, dict)
+        or set(criteria) != expected
+        or any(not isinstance(v, str) or not v.strip() for v in criteria.values())
+    ):
+        raise ValueError(
+            "判断模型分类条件必须包含 " + "、".join(sorted(expected)) + " 三项非空说明"
+        )
+    return values

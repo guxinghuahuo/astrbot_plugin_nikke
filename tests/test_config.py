@@ -261,6 +261,8 @@ def test_grouped_settings_win_over_hidden_legacy_defaults():
     settings = Settings.from_dict(cfg)
     assert settings.enabled and settings.jev_token == "private-token"
     assert settings.jev_confidence_threshold == 0.85
+    assert migrate_layout(cfg)
+    assert cfg["ai_filter"]["decision_token"] == "private-token"
     assert not migrate_layout(cfg)
 
 

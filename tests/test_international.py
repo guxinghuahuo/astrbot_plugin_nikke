@@ -114,10 +114,10 @@ def test_display_toggle_and_chat_preserve_raw_archive_and_delivery_state(tmp_pat
         db.close()
 
 
-def test_filter_bypass_and_media_retry_across_restart_and_new_language(tmp_path):
+def test_filter_disabled_and_media_retry_across_restart_and_new_language(tmp_path):
     async def run():
         sub = settings(item()).subscriptions[0]
-        cfg = settings(item(), ai_filter_enabled=True, jev_filter_enabled=True, jev_token="test")
+        cfg = settings(item(), ai_filter_enabled=False, jev_filter_enabled=True, jev_token="test")
         path = tmp_path / "state.db"
         db = Store(path)
         db.sync((sub,))

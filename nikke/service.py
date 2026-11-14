@@ -421,8 +421,6 @@ class Service:
             raise FeedError(f"{failures} 张原图未发送成功，{next_step}")
 
     async def assess(self, subscription: Subscription, entry: Entry) -> Decision:
-        if subscription.source == "blablalink":
-            return Decision("disabled", "国际服官方动态直接推送，跳过全部内容筛选")
         if not self.settings.ai_filter_enabled:
             return Decision("disabled", "AI 筛选已关闭")
         if self.classifier is None:
@@ -539,13 +537,14 @@ class Service:
             + ("已配置" if self.settings.official_image_proxy else "未配置（直连）"),
             f"检查间隔：{self.settings.interval} ± {self.settings.jitter} 秒"
             f"（正常轮询 {lower}～{upper} 秒）",
-            "AI 内容筛选（仅 bilibili）："
+            "AI 内容筛选（bilibili / 国际服）："
             + ("开启" if self.settings.ai_filter_enabled else "关闭"),
-            "Jev 前置筛选："
+            "判断模型前置筛选："
             + (
-                f"开启，正常放行阈值 {self.settings.jev_confidence_threshold:.2f}"
+                f"开启，接入方式 {self.settings.decision_backend}，"
+                f"正常放行阈值 {self.settings.jev_confidence_threshold:.2f}"
                 if self.settings.ai_filter_enabled and self.settings.jev_filter_enabled
-                else "关闭（需同时开启 AI 内容筛选与 Jev 过滤）"
+                else "关闭（需同时开启 AI 内容筛选与判断模型预筛选）"
             ),
             "本地动态查询工具："
             + (
