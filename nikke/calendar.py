@@ -10,7 +10,7 @@ import aiohttp
 
 from .chinese import simplified
 from .feed import FeedError
-from .network import OfficialRequestDiagnostics, request_error_reason
+from .network import OfficialRequestDiagnostics, image_proxy_url, request_error_reason
 
 CALENDAR_URL = "https://api.blablalink.com/api/ugc/direct/standalonesite/Dynamics/GetCalendarDetail"
 CALENDAR_LINK = "https://www.blablalink.com/activity-calendar"
@@ -201,8 +201,9 @@ def reminder_pages(rows: list[dict], now: float, updated: float, limit=3000):
 
 
 class CalendarClient:
-    def __init__(self, *, logger=None):
+    def __init__(self, *, logger=None, fallback_proxy: str = ""):
         self.logger = logger
+        self.fallback_proxy = image_proxy_url(fallback_proxy)
 
     async def fetch(self) -> tuple[dict, list[CalendarEvent]]:
         common = {
@@ -232,12 +233,12 @@ class CalendarClient:
                 cookie_jar=aiohttp.DummyCookieJar(),
                 trust_env=False,
             ) as session:
-                async with session.post(
-                    CALENDAR_URL, json={}, headers=headers, allow_redirects=False
-                ) as response:
-                    raw = await diagnostic.read(response, MAX_BYTES)
-                    if response.status != 200:
-                        raise FeedError(f"官方日历 HTTP {response.status}")
+                raw = await diagnostic.post(
+                    session, json={}, headers=headers, limit=MAX_BYTES,
+                    fallback_proxy=self.fallback_proxy,
+                )
+                if diagnostic.status != 200:
+                    raise FeedError(f"官方日历 HTTP {diagnostic.status}")
             diagnostic.stage = "JSON 解码"
             payload = json.loads(raw)
             diagnostic.stage = "业务数据解析"

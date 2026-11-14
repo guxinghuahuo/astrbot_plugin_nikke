@@ -139,13 +139,13 @@ async def fetch_official(client, url):
         client.logger, "官方动态/" + language, ENDPOINT
     )
     try:
-        async with client.session.post(
-            ENDPOINT, json=body, headers=headers, allow_redirects=False,
+        raw = await diagnostic.post(
+            client.session, json=body, headers=headers, limit=MAX_FEED_BYTES,
+            fallback_proxy=client.official_api_proxy,
             timeout=aiohttp.ClientTimeout(total=30, connect=10),
-        ) as response:
-            raw = await diagnostic.read(response, MAX_FEED_BYTES)
-            if response.status != 200:
-                raise FeedError(f"官方动态 HTTP {response.status}")
+        )
+        if diagnostic.status != 200:
+            raise FeedError(f"官方动态 HTTP {diagnostic.status}")
         diagnostic.stage = "JSON 解码"
         payload = json.loads(raw.decode("utf-8"))
         diagnostic.stage = "业务数据解析"

@@ -37,6 +37,19 @@ def test_character_image_reply_is_optional_and_grouped():
     assert not schema["base"]["items"]["character_image_enabled"]["default"]
 
 
+def test_international_proxy_fallback_is_opt_in_and_reuses_configured_proxy():
+    schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
+    assert schema["base"]["items"]["international_proxy_fallback"]["default"] is False
+    base = {"official_image_proxy": "http://127.0.0.1:7890"}
+    assert Settings.from_dict({"base": base}).official_api_proxy == ""
+    base["international_proxy_fallback"] = True
+    assert Settings.from_dict({"base": base}).official_api_proxy == base["official_image_proxy"]
+    no_proxy = Settings.from_dict({"base": {"international_proxy_fallback": True}})
+    assert no_proxy.official_api_proxy == ""
+    with pytest.raises(ValueError, match="国际服代理回退必须为开关"):
+        Settings.from_dict({"base": {"international_proxy_fallback": "true"}})
+
+
 def test_group_numbers_resolve_and_deduplicate_legacy_targets():
     cfg = config()
     cfg["subscriptions"][0]["targets"] += [" 123456789 ", 123456789, "123456"]

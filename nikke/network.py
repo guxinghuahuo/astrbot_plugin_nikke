@@ -1,4 +1,4 @@
-"""Validate explicitly configured image proxy URLs without exposing credentials."""
+"""Official request diagnostics and explicit proxy handling."""
 
 import asyncio
 import base64
@@ -33,11 +33,34 @@ class OfficialRequestDiagnostics:
         self.logger, self.label, self.url = logger, label, url
         self.trace_id = uuid4().hex[:12]
         self.started = time.monotonic()
+        self.route = "direct"
         self.stage = "连接/等待响应"
         self.status = None
         self.headers = {}
         self.body = bytearray()
         self.complete = False
+
+    async def post(self, session, *, limit: int, fallback_proxy: str = "", **request) -> bytes:
+        try:
+            async with session.post(self.url, allow_redirects=False, **request) as response:
+                return await self.read(response, limit)
+        except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
+            if (
+                not fallback_proxy
+                or self.status is not None
+                or isinstance(exc, (aiohttp.ClientSSLError, aiohttp.ServerFingerprintMismatch))
+            ):
+                raise
+            self.failure(exc)
+
+        if self.logger is not None:
+            self.logger.info("[NIKKE] 官方接口切换代理重试 id=%s %s", self.trace_id, self.label)
+        self.route = "proxy"
+        self.started = time.monotonic()
+        async with session.post(
+            self.url, allow_redirects=False, proxy=fallback_proxy, **request
+        ) as response:
+            return await self.read(response, limit)
 
     async def read(self, response, limit: int) -> bytes:
         self.status = response.status
@@ -63,6 +86,7 @@ class OfficialRequestDiagnostics:
             return
         context = {
             "id": self.trace_id, "api": self.label, "method": "POST", "url": self.url,
+            "route": self.route,
             "stage": self.stage, "seconds": round(time.monotonic() - self.started, 3),
             "http_status": self.status, "response_headers": self.headers,
             "received_bytes": len(self.body), "response_complete": self.complete,

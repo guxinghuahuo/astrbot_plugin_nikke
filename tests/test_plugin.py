@@ -17,6 +17,26 @@ import pytest
 from nikke.classifier import Decision
 
 
+def test_proxy_fallback_config_reaches_both_official_clients(plugin_class):
+    async def scenario():
+        proxy = "http://user:private-secret@127.0.0.1:7890"
+        plugin = plugin_class(context(), {
+            "base": {"official_image_proxy": proxy, "international_proxy_fallback": True}
+        })
+        await plugin.initialize()
+        try:
+            service = plugin.service
+            assert service.client.official_api_proxy == proxy
+            assert service.calendar.client.fallback_proxy == proxy
+            status = await service.status()
+            assert "国际服代理回退：开启" in status
+            assert "private-secret" not in status
+        finally:
+            await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
 @pytest.fixture
 def plugin_class(monkeypatch, tmp_path):
     modules = {}

@@ -94,6 +94,7 @@ class Service:
             logger,
             clock=clock,
             random_uniform=random_uniform,
+            fallback_proxy=settings.official_api_proxy,
         )
         self.image_fallback = ImageFallbackService(
             settings,
@@ -531,10 +532,14 @@ class Service:
 
     async def status(self) -> str:
         lower, upper = self.settings.poll_range
+        proxy_fallback = "关闭"
+        if self.settings.international_proxy_fallback:
+            proxy_fallback = "开启" if self.settings.official_api_proxy else "开启，待配置代理"
         lines = [
             "NIKKE 自动推送：" + ("开启" if self.settings.enabled else "关闭"),
             "国际服图片代理："
             + ("已配置" if self.settings.official_image_proxy else "未配置（直连）"),
+            "国际服代理回退：" + proxy_fallback,
             f"检查间隔：{self.settings.interval} ± {self.settings.jitter} 秒"
             f"（正常轮询 {lower}～{upper} 秒）",
             "AI 内容筛选（bilibili / 国际服）："

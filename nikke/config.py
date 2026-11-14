@@ -29,6 +29,7 @@ GROUP_FIELDS = {
         "poll_jitter_seconds",
         "send_images",
         "official_image_proxy",
+        "international_proxy_fallback",
         "qq_platform_id",
         "character_image_enabled",
     ),
@@ -408,6 +409,11 @@ class Settings:
     international_categories: str = INTERNATIONAL_CATEGORIES_JSON
     international_instructions: str = ONLINE_POLICY
     international_criteria: str = INTERNATIONAL_CRITERIA_JSON
+    international_proxy_fallback: bool = False
+
+    @property
+    def official_api_proxy(self) -> str:
+        return self.official_image_proxy if self.international_proxy_fallback else ""
 
     @property
     def default_international_policy(self) -> bool:
@@ -475,6 +481,9 @@ class Settings:
         international_direct = config.get("international_direct", True)
         if type(international_direct) is not bool:
             raise ValueError("国际服直连官方接口必须为开关")
+        international_proxy_fallback = config.get("international_proxy_fallback", False)
+        if type(international_proxy_fallback) is not bool:
+            raise ValueError("国际服代理回退必须为开关")
         try:
             parsed = urlsplit(base)
             port = parsed.port
@@ -689,6 +698,7 @@ class Settings:
             gemini_model,
             protocol,
             *international_values,
+            international_proxy_fallback=international_proxy_fallback,
         )
 
 

@@ -67,6 +67,12 @@
         "default": "",
         "secret": true,
         "hint": "大陆地区通常无法直接访问国际服图片。如需获取动态图片，建议配置 HTTP 代理，例如 http://192.168.0.2:7890。"
+      },
+      "international_proxy_fallback": {
+        "type": "bool",
+        "description": "国际服代理回退",
+        "default": false,
+        "hint": "开启并填写上方代理后，国际服官方动态和活动日历会先直连。连接失败或超时且未收到 HTTP 响应时，使用该代理重试一次。"
       }
     }
   },

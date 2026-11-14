@@ -242,9 +242,12 @@ def parse_feed(data: bytes) -> list[Entry]:
 
 
 class RSSClient:
-    def __init__(self, *, official_image_proxy: str = "", logger=None):
+    def __init__(
+        self, *, official_image_proxy: str = "", official_api_proxy: str = "", logger=None
+    ):
         self.logger = logger
         self.official_image_proxy = image_proxy_url(official_image_proxy)
+        self.official_api_proxy = image_proxy_url(official_api_proxy)
         self.session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=60, connect=10),
             headers={"User-Agent": "AstrBot-Nikke-RSS/0.1"},
