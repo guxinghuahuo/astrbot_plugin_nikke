@@ -163,6 +163,12 @@
         "description": "启用非中文动态翻译",
         "default": false
       },
+      "remove_promotions": {
+        "type": "bool",
+        "description": "过滤翻译推广信息与标签",
+        "default": true,
+        "hint": "仅在非中文动态翻译开启时生效。清理常见中英日韩下载/商店/官方社区推广尾注、应用内购买免责声明、版权声明及话题标签；保留正文、活动规则、兑换码、视频链接、原链接和配图。关闭后翻译完整原文。原始存档不修改，切换后重新预览会使用对应翻译缓存，已发送动态不重发。"
+      },
       "provider": {
         "type": "string",
         "description": "翻译模型",

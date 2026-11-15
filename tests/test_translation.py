@@ -950,3 +950,145 @@ def test_routine_polling_is_debug_while_failures_remain_warning(tmp_path, caplog
         asyncio.run(run())
     finally:
         f.db.close()
+
+
+PROMOTION_FOOTER = """*应用内购买(含概率型道具)
+
+===================
+👉下载直达链接
+Google Play商店: http://url.kr/ytw5r4
+App Store : http://url.kr/uhnqmo
+PC版本 : https://nikke-kr.com/download.html
+
+👉官方社区直达链接
+https://game.naver.com/lounge/nikke
+
+©2022-2026 PROXIMA BETA PTE. LTD. ALL RIGHTS RESERVED.
+©2022-2026 SHIFT UP CORP. ALL RIGHTS RESERVED.
+
+#NIKKE
+#NIKKE4thAnniversary"""
+
+
+def test_cleanup_user_example_keeps_story_and_appended_video():
+    from nikke.translation import clean_translation_entry
+
+    original = post(
+        title="【涉嫌剧透】4周年剧情活动MARIA-n过场动画",
+        text=(
+            "#妮姬4周年 #玛丽安\n\n指挥官，我爱你。\n无论发生什么，以怎样的形式。\n\n"
+            "4周年剧情活动MARIA-n\n游戏内过场动画特别公开！\n\n"
+            + PROMOTION_FOOTER
+            + "\n\n【涉嫌剧透】4周年剧情活动MARIA-n过场动画\n"
+            "https://www.youtube.com/watch?v=AY30HqRak7M"
+        ),
+    )
+    cleaned = clean_translation_entry(original)
+    assert "指挥官，我爱你。" in cleaned.text
+    assert "游戏内过场动画特别公开！" in cleaned.text
+    assert "https://www.youtube.com/watch?v=AY30HqRak7M" in cleaned.text
+    for discarded in ("#", "©", "应用内购买", "Google Play", "url.kr", "naver.com", "===="):
+        assert discarded not in cleaned.text
+    assert cleaned.id == original.id and cleaned.link == original.link
+    assert cleaned.images == original.images
+    assert "url.kr" in original.text
+
+
+@pytest.mark.parametrize(
+    "footer",
+    [
+        "*인앱 구매(확률형 아이템 포함)\n"
+        "👉다운로드 바로가기\n"
+        "구글 플레이 스토어: https://example.com/get\n"
+        "👉공식 커뮤니티 바로가기\n"
+        "https://example.com/community",
+        "In-app purchases (random items included)\n"
+        "Download now\n"
+        "Google Play: https://example.com/get\n"
+        "Official community\n"
+        "https://example.com/community",
+        "アプリ内課金（ランダムアイテム含む）\n"
+        "ダウンロードはこちら\n"
+        "Google Playストア: https://example.com/get\n"
+        "公式コミュニティはこちら\n"
+        "https://example.com/community",
+    ],
+)
+def test_cleanup_multilingual_footers(footer):
+    from nikke.translation import clean_translation_text
+
+    text = "剧情正文\n" + footer + "\nhttps://www.youtube.com/watch?v=AY30HqRak7M"
+    assert clean_translation_text(text) == "剧情正文\nhttps://www.youtube.com/watch?v=AY30HqRak7M"
+
+
+def test_cleanup_keeps_event_instructions_codes_fragments_and_store_news():
+    from nikke.translation import clean_translation_text
+
+    content = """下载更新后领取奖励，活动截止11月20日。
+兑换码：NIKKE2026
+Google Play 商店更新延迟，请等待恢复。
+活动详情：https://example.com/event#rules
+Story #NIKKE #니케 ＃ニケ
+"""
+    cleaned = clean_translation_text(content)
+    assert "下载更新后领取奖励" in cleaned and "NIKKE2026" in cleaned
+    assert "Google Play 商店更新延迟" in cleaned
+    assert "https://example.com/event#rules" in cleaned
+    assert cleaned.endswith("Story")
+
+
+def test_cleanup_switch_payload_cache_and_media(tmp_path):
+    f = fixture(tmp_path)
+    original = post(text=post().text + "\n#NIKKE\n" + PROMOTION_FOOTER)
+    f.rss.fetch.return_value = [
+        replace(reference(), text=reference().text + "\n" + PROMOTION_FOOTER)
+    ]
+
+    async def run():
+        cleaned = await f.translator.render(f.sub, original, TARGET)
+        payload = json.loads(f.create.call_args.kwargs["messages"][1]["content"])
+        assert payload["source"]["text"] == post().text
+        assert "url.kr" not in payload["traditional_reference"]["text"]
+        assert cleaned.entry.images == reference().images and cleaned.entry.link == original.link
+        await f.translator.render(f.sub, original, TARGET)
+        assert f.create.await_count == 1
+        cfg = replace(f.cfg, translation=replace(f.cfg.translation, remove_promotions=False))
+        raw_result = translation_result()
+        raw_result["text"] += "\n#NIKKE\n" + PROMOTION_FOOTER
+        f.create.return_value.choices[0].message.content = json.dumps(raw_result)
+        raw = await Translator(f.context, cfg, f.db, f.rss, LOG).render(f.sub, original, TARGET)
+        assert f.create.await_count == 2 and "url.kr" in raw.entry.text
+        assert (
+            json.loads(f.create.call_args.kwargs["messages"][1]["content"])["source"]["text"]
+            == original.text
+        )
+        assert (await f.translator.render(f.sub, original, TARGET)).entry.text == cleaned.entry.text
+        assert f.create.await_count == 2
+
+    try:
+        asyncio.run(run())
+    finally:
+        f.db.close()
+
+
+def test_cleanup_does_not_relax_content_link_validation():
+    from nikke.translation import clean_translation_entry
+
+    original = clean_translation_entry(post(text=post().text + "\n" + PROMOTION_FOOTER))
+    result = translation_result()
+    result["text"] += "\n#NIKKE"
+    assert (
+        "#NIKKE"
+        not in parse_translation(json.dumps(result), original, reference(), remove_promotions=True)[
+            "text"
+        ]
+    )
+    result["text"] = "被删掉正文链接"
+    with pytest.raises(TranslationValidationError):
+        parse_translation(json.dumps(result), original, reference(), remove_promotions=True)
+
+
+@pytest.mark.parametrize("value", [None, 1, "true"])
+def test_cleanup_switch_requires_bool(value):
+    with pytest.raises(ValueError):
+        TranslationSettings.from_dict({"remove_promotions": value})

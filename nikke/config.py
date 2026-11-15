@@ -311,6 +311,7 @@ class TranslationSettings:
     thinking_mode: str = "auto"
     disable_thinking: bool = True
     custom_parameters: dict = field(default_factory=dict, repr=False)
+    remove_promotions: bool = True
 
     @classmethod
     def from_dict(cls, section):
@@ -330,6 +331,9 @@ class TranslationSettings:
         disable = section.get("disable_thinking", True)
         if type(disable) is not bool:
             raise ValueError("关闭翻译思考必须为开关")
+        remove_promotions = section.get("remove_promotions", True)
+        if type(remove_promotions) is not bool:
+            raise ValueError("过滤翻译推广信息与标签必须为开关")
         parameters = section.get("custom_parameters", "{}")
         try:
             if isinstance(parameters, str):
@@ -367,6 +371,7 @@ class TranslationSettings:
             mode,
             disable,
             parameters,
+            remove_promotions,
         )
 
 

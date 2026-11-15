@@ -401,3 +401,10 @@ v0.1.6 改为工具 `nikke_query_official_posts(start_date, end_date)`。由模�
 参数实际合并到翻译请求体顶层，不是将 `extra_body` 字段发给服务商。无需重新填写模型地址或密钥，不能覆盖模型、消息、工具或认证字段。更换开关、模式或参数后，译文缓存使用新策略；已发出的消息及图片续传不重复翻译。依据：[AstrBot 适配器源码](https://github.com/AstrBotDevs/AstrBot/blob/v4.10.4/astrbot/core/provider/sources/openai_source.py)、[Qwen 接口说明](https://www.alibabacloud.com/help/en/model-studio/deep-thinking)、[DeepSeek 接口说明](https://api-docs.deepseek.com/guides/thinking_mode/)。
 
 功能默认关闭，升级不会修改现有群号、Cookie、Token、数据库或订阅语言。更新插件代码后重载一次；之后在 WebUI 保存配置会自动生效，无需重建 RSSHub。
+
+
+### 翻译推广清理（v1.4.2）
+
+「国际服非中文动态翻译 → 过滤翻译推广信息与标签」（`translation.remove_promotions`）默认开启，只作用于开启翻译的英、日、韩国际服动态。清理常见中英日韩下载/商店及官方社区推广尾注、购买免责声明、版权声明、分隔线和话题标签。剧情正文、活动规则、奖励、兑换码、视频链接、动态原链接及配图保留。正文正常讨论下载或商店问题不会按关键词整段删除；非标准推广格式可能保留。
+
+清理在翻译前完成，繁中参考也只提交清理后的副本，译文再次去除残余标签。链接校验仍保留，仅以清理后的正文为准，不因移除推广链接触发失败重试。关闭开关恢复全文翻译，原始 SQLite 存档不变；新旧规则缓存隔离，手动预览即可查看新结果，已发送的历史动态不会重发。

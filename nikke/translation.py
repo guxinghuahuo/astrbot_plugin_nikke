@@ -29,6 +29,81 @@ target 必须是参考中实际存在的名称的简体形式，并在译文中�
 """
 URL = re.compile(r"https?://[^\s<>]+")
 
+CLEANUP_PROMPT = """
+source 已清理常见推广尾注和话题标签。只翻译清理后的内容，不恢复已删信息，
+不从参考中补入下载推广、社区引流、版权尾注、购买免责声明或话题标签。
+剧情台词、活动规则、时间、奖励、兑换码及保留下来的内容链接必须保留。
+"""
+PROMOTION_HEADING = re.compile(
+    r"^(?:下载(?:直达)?链接|下載(?:直達)?連結|下载游戏|下載遊戲|"
+    r"官方(?:社区|社群)(?:直达)?(?:链接|連結)|"
+    r"다운로드\s*바로가기|공식\s*(?:커뮤니티|카페)\s*바로가기|"
+    r"download(?:\s+(?:now|here|links?|the game))?|"
+    r"official\s+community(?:\s+links?)?|"
+    r"ダウンロード(?:はこちら|リンク)?|公式コミュニティ(?:はこちら|リンク)?)\s*[:：!！]?$",
+    re.I,
+)
+STORE_LABEL = re.compile(
+    r"^(?:google\s*play(?:\s*(?:store|商店|ストア|스토어))?|"
+    r"구글\s*플레이(?:\s*스토어)?|app\s*store|앱\s*스토어|"
+    r"pc\s*(?:版本|版|version|버전)|"
+    r"官方(?:社区|社群)(?:直达)?(?:链接|連結)|official\s+community)\s*[:：]?\s*$",
+    re.I,
+)
+DISCLAIMER = re.compile(
+    r"^(?:应用内购买|應用內購買|인앱\s*구매|앱\s*내\s*구매|"
+    r"in[- ]app\s*purchases?|アプリ内課金)\s*"
+    r"(?:[（(][^\n）)]*[）)])?[.。]*$",
+    re.I,
+)
+HASHTAG = re.compile(r"(?<![\w#＃])(?:[#＃][\w]+[#＃]?)+", re.UNICODE)
+
+
+def clean_translation_text(text):
+    """Remove known footer lines, not entire posts; preserve URLs outside link sections."""
+    output = []
+    promotion_links = False
+    for line in text.splitlines():
+        probe = re.sub(r"^[\s*＊👉➡️▶☞📥🔗]+", "", line).strip()
+        if not probe:
+            output.append("")
+            continue
+        if re.fullmatch(r"[=＝_\-─━]{3,}", probe):
+            continue
+        if PROMOTION_HEADING.fullmatch(probe):
+            promotion_links = True
+            continue
+        if DISCLAIMER.fullmatch(probe) or re.match(r"^(?:©|ⓒ|copyright\s+©?)\s*\d{4}", probe, re.I):
+            continue
+        urls = URL.findall(probe)
+        label = URL.sub("", probe).strip()
+        if STORE_LABEL.fullmatch(label) and (urls or len(probe) < 60):
+            promotion_links = True
+            continue
+        if promotion_links and urls and not label:
+            # A video may be appended after the marketing footer; never lose it.
+            if not any(
+                re.match(r"https?://(?:www\.|m\.)?(?:youtube\.com/|youtu\.be/)", u, re.I)
+                for u in urls
+            ):
+                continue
+        # Real content ends a link section. Never discard the rest of the post.
+        promotion_links = False
+        # Protect URL fragments; # in a URL is not a social hashtag.
+        pieces = re.split(r"(https?://[^\s<>]+)", line)
+        cleaned = "".join(
+            p if p.startswith(("https://", "http://")) else HASHTAG.sub("", p) for p in pieces
+        )
+        if cleaned.strip():
+            output.append(cleaned.strip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
+
+
+def clean_translation_entry(entry):
+    return replace(
+        entry, title=clean_translation_text(entry.title), text=clean_translation_text(entry.text)
+    )
+
 
 class TranslationValidationError(FeedError):
     """Invalid model output; keep this delivery without blocking unrelated posts."""
@@ -106,7 +181,7 @@ def unsupported_parameters(exc, parameters):
     return mentions_key and rejection
 
 
-def parse_translation(text, original, reference, *, warnings=None):
+def parse_translation(text, original, reference, *, warnings=None, remove_promotions=False):
     warnings = warnings if warnings is not None else []
     if isinstance(text, str):
         # Some compatible endpoints return reasoning in a leading tagged block.
@@ -118,6 +193,10 @@ def parse_translation(text, original, reference, *, warnings=None):
         result = json.loads(text)
     except (TypeError, ValueError) as exc:
         raise TranslationValidationError("翻译结果不是有效 JSON，保留任务重试") from exc
+    if remove_promotions and isinstance(result, dict):
+        for name in ("title", "text"):
+            if isinstance(result.get(name), str):
+                result[name] = clean_translation_text(result[name])
     if (
         not isinstance(result, dict)
         or any(not isinstance(result.get(k), str) for k in ("title", "text"))
@@ -216,6 +295,8 @@ class Translator:
         options = self.settings.translation
         if not options.enabled or sub.source != "blablalink" or sub.language == "zh-TW":
             return None
+        source = clean_translation_entry(entry) if options.remove_promotions else entry
+        prompt = PROMPT + CLEANUP_PROMPT if options.remove_promotions else PROMPT
         async with self.lock:
             started = await asyncio.to_thread(
                 self.store.translation_started, sub.key, entry.id, self.clock()
@@ -246,6 +327,7 @@ class Translator:
                 options.disable_thinking,
                 parameters,
                 PROMPT,
+                "promotion-cleanup-v1" if options.remove_promotions else "full-text",
                 sub.language,
                 entry.to_dict(),
             ]
@@ -261,12 +343,19 @@ class Translator:
                     cached["reference_link"],
                 )
             reference = await self._reference(sub, entry, started + options.wait_minutes * 60)
+            reference_text = (
+                clean_translation_entry(reference)
+                if reference and options.remove_promotions
+                else reference
+            )
             payload = json.dumps(
                 {
                     "language": sub.language,
-                    "source": {"title": entry.title, "text": entry.text},
+                    "source": {"title": source.title, "text": source.text},
                     "traditional_reference": (
-                        {"title": reference.title, "text": reference.text} if reference else None
+                        {"title": reference_text.title, "text": reference_text.text}
+                        if reference_text
+                        else None
                     ),
                 },
                 ensure_ascii=False,
@@ -297,7 +386,7 @@ class Translator:
                         return await self.context.llm_generate(
                             chat_provider_id=provider_id,
                             prompt=payload,
-                            system_prompt=PROMPT,
+                            system_prompt=prompt,
                             contexts=[],
                             tools=None,
                             max_tokens=8192,
@@ -305,7 +394,7 @@ class Translator:
                     kwargs = dict(
                         model=model,
                         messages=[
-                            {"role": "system", "content": PROMPT},
+                            {"role": "system", "content": prompt},
                             {"role": "user", "content": payload},
                         ],
                         stream=False,
@@ -339,7 +428,13 @@ class Translator:
                 else:
                     text = response.completion_text
                 warnings = []
-                content = parse_translation(text, entry, reference, warnings=warnings)
+                content = parse_translation(
+                    text,
+                    source,
+                    reference,
+                    warnings=warnings,
+                    remove_promotions=options.remove_promotions,
+                )
                 if warnings:
                     self.logger.warning(
                         "[NIKKE] 翻译专名检查提示，不阻断推送：订阅=%s，动态=%s，提示=%s",
