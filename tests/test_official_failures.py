@@ -130,7 +130,7 @@ def test_official_proxy_fallback_is_limited_to_pre_response_network_failure(
         finally:
             await client.close()
 
-    with caplog.at_level(logging.INFO, logger=logger.name):
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
         asyncio.run(scenario())
     assert requests[0][1].get("proxy") is None
     if mode in {"timeout", "disconnected", "both_fail"}:
@@ -224,7 +224,7 @@ def test_failed_api_logs_context_stack_and_reconstructable_response(
     monkeypatch, caplog, source, mode
 ):
     logger = logging.getLogger("official-api-diagnostics")
-    caplog.set_level(logging.WARNING, logger=logger.name)
+    caplog.set_level(logging.DEBUG, logger=logger.name)
     body = {
         "http": b"upstream service unavailable",
         "json": ("invalid JSON\x0b原始正文" * 1200).encode(),
@@ -268,9 +268,18 @@ def test_failed_api_logs_context_stack_and_reconstructable_response(
             await client.close()
 
     asyncio.run(scenario())
-    messages = [r.getMessage() for r in caplog.records if r.name == logger.name]
+    records = [r for r in caplog.records if r.name == logger.name]
+    warning, = [r.getMessage() for r in records if r.levelno >= logging.WARNING]
+    reason = {
+        "http": "HTTP 503", "timeout": "请求超时", "partial": "传输失败",
+        "json": "解析失败", "encoding": "编码无效", "business": "官方",
+    }[mode]
+    assert reason in warning and len(warning.splitlines()) == 1
+    assert "Traceback" not in warning and "API原始响应" not in warning
+    messages = [r.getMessage() for r in records if r.levelno == logging.DEBUG]
     context_text, stack = messages[0].split("\n", 1)
     context = json.loads(context_text.removeprefix("[NIKKE] 官方接口故障 "))
+    assert context["id"] in warning
     assert context["method"] == "POST"
     assert context["seconds"] >= 0
     assert "Traceback" in stack
@@ -288,11 +297,30 @@ def test_failed_api_logs_context_stack_and_reconstructable_response(
         assert (base64.b64decode(raw) if mode == "encoding" else raw.encode()) == body
 
 
+def test_timeout_with_debug_disabled_emits_one_short_warning(caplog, monkeypatch):
+    from unittest.mock import Mock
+
+    from nikke.network import OfficialRequestDiagnostics
+
+    logger = logging.getLogger("concise-api-warning")
+    caplog.set_level(logging.WARNING, logger=logger.name)
+    format_stack = Mock()
+    monkeypatch.setattr("nikke.network.traceback.format_exception", format_stack)
+    diagnostic = OfficialRequestDiagnostics(logger, "官方动态/ko", "https://api.blablalink.com")
+    diagnostic.failure(asyncio.TimeoutError("private-network-details"))
+    warning, = [record for record in caplog.records if record.name == logger.name]
+    assert warning.levelno == logging.WARNING
+    assert "官方动态/ko 直连失败：请求超时" in warning.getMessage()
+    assert diagnostic.trace_id in warning.getMessage()
+    assert "private-network-details" not in warning.getMessage()
+    format_stack.assert_not_called()
+
+
 def test_diagnostic_redacts_credentials_and_marks_size_limit(caplog):
     from nikke.network import OfficialRequestDiagnostics, ResponseTooLarge
 
     logger = logging.getLogger("bounded-api-diagnostics")
-    caplog.set_level(logging.WARNING, logger=logger.name)
+    caplog.set_level(logging.DEBUG, logger=logger.name)
 
     class Response:
         status = 200

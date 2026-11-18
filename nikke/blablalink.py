@@ -151,7 +151,7 @@ async def fetch_official(client, url):
         diagnostic.stage = "业务数据解析"
         return await asyncio.to_thread(normalize, payload, language)
     except Exception as exc:
-        diagnostic.failure(exc)
+        diagnostic.failure(exc, str(exc) if isinstance(exc, FeedError) else None)
         if isinstance(exc, FeedError):
             raise
         if isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError, ValueError, UnicodeError)):

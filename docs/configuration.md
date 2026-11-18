@@ -297,7 +297,7 @@ docker exec astrbot python /AstrBot/data/plugins/astrbot_plugin_nikke/scripts/ch
 
 动态与日历的失败日志区分 DNS 解析、TLS 证书、连接中断、请求超时、响应体传输和 JSON/编码解析错误，并附异常类型。HTTP 非 200 和业务数据校验失败单独报告。触发代理回退时，可按同一诊断编号查看直连与代理记录，`route` 字段分别为 `direct` 和 `proxy`。请在实际运行 AstrBot 的容器内执行上述日历自检，以及 `python scripts/check_international.py --source direct --skip-images`，测试容器内的直连网络。插件使用配置中显式填写的代理地址。
 
-官方动态与日历失败时，还会通过 AstrBot 日志器以 WARNING 记录 `官方接口故障` 与 `API原始响应`，无须开启 DEBUG。使用相同 `id` 关联请求地址、耗时、失败阶段、HTTP 状态、响应类型/上游请求编号、完整异常链和原始响应正文。正文以 JSON 字符串转义并分段，按 `part` 顺序解码拼接即可恢复；非 UTF-8 正文使用 Base64。凭据字段会脱敏，不记录请求认证头或 Cookie。正常响应不重复记录正文；失败正文最多记录 4 MiB，超限或传输中断明确标为不完整；连接阶段失败则注明“未收到响应”。历史留存随 AstrBot 日志或容器日志的保留设置执行，排障时请导出对应 `id` 的全部分段，避免仅保留最后一条摘要。
+官方动态与日历失败时，WARNING 记录接口、直连或代理、简短原因及诊断编号。需要详细排障时，请在复现前开启 DEBUG，查看 `官方接口故障` 与 `API原始响应`。使用相同 `id` 关联请求地址、耗时、失败阶段、HTTP 状态、响应类型/上游请求编号、完整异常链和原始响应正文。正文以 JSON 字符串转义并分段，按 `part` 顺序解码拼接即可恢复；非 UTF-8 正文使用 Base64。凭据字段会脱敏，不记录请求认证头或 Cookie。正常响应不重复记录正文；失败正文最多记录 4 MiB，超限或传输中断明确标为不完整；连接阶段失败则注明“未收到响应”。历史留存随 AstrBot 日志或容器日志的保留设置执行，排障时请导出对应 `id` 的全部分段，避免仅保留最后一条摘要。
 
 日历接口接入方式参考 [NIKKEAutoScript 日历实现](https://github.com/megumiss/NIKKEAutoScript/blob/dbe59a42e0025e4a4d7c49aba8864d03a684ffa5/module/webui/api/routes_calendar.py)，提醒调度、队列及重试由本插件实现。第一版不包含国服、维护公告解析、每日固定汇总和活动图片。
 

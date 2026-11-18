@@ -100,7 +100,7 @@ class NikkePlugin(Star):
             self.service = None
             raise
         logger.info(
-            "[NIKKE] 插件 v1.4.2 已加载，自动推送=%s，检查间隔=%s±%s 秒",
+            "[NIKKE] 插件 v1.4.3 已加载，自动推送=%s，检查间隔=%s±%s 秒",
             settings.enabled,
             settings.interval,
             settings.jitter,

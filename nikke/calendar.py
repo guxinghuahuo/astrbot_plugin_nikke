@@ -244,7 +244,7 @@ class CalendarClient:
             diagnostic.stage = "业务数据解析"
             return payload, normalise(payload)
         except Exception as exc:
-            diagnostic.failure(exc)
+            diagnostic.failure(exc, str(exc) if isinstance(exc, FeedError) else None)
             if isinstance(exc, FeedError):
                 raise
             if isinstance(

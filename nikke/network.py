@@ -81,8 +81,15 @@ class OfficialRequestDiagnostics:
         self.complete = True
         return bytes(self.body)
 
-    def failure(self, exc: Exception):
+    def failure(self, exc: Exception, reason: str | None = None):
         if self.logger is None:
+            return
+        self.logger.warning(
+            "[NIKKE] %s %s失败：%s (id=%s)",
+            self.label, "直连" if self.route == "direct" else "代理",
+            reason or request_error_reason(exc), self.trace_id,
+        )
+        if not self.logger.isEnabledFor(10):  # DEBUG
             return
         context = {
             "id": self.trace_id, "api": self.label, "method": "POST", "url": self.url,
@@ -93,12 +100,12 @@ class OfficialRequestDiagnostics:
             "response_received": self.status is not None,
         }
         stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        self.logger.warning(
+        self.logger.debug(
             "[NIKKE] 官方接口故障 %s\n%s",
             _redact_diagnostic(json.dumps(context, ensure_ascii=False)), _redact_diagnostic(stack),
         )
         if self.status is None:
-            self.logger.warning("[NIKKE] API原始响应 id=%s：未收到响应", self.trace_id)
+            self.logger.debug("[NIKKE] API原始响应 id=%s：未收到响应", self.trace_id)
             return
         try:
             body = _redact_diagnostic(self.body.decode("utf-8"))
@@ -109,7 +116,7 @@ class OfficialRequestDiagnostics:
         # JSON escaping keeps control characters visible and prevents forged log lines.
         chunks = [body[i:i + 4096] for i in range(0, len(body), 4096)] or [""]
         for index, chunk in enumerate(chunks, 1):
-            self.logger.warning(
+            self.logger.debug(
                 "[NIKKE] API原始响应 id=%s part=%d/%d encoding=%s data=%s",
                 self.trace_id, index, len(chunks), encoding, json.dumps(chunk, ensure_ascii=False),
             )
@@ -120,7 +127,7 @@ def request_error_reason(exc: Exception) -> str:
     if isinstance(exc, ResponseTooLarge):
         reason = "响应体超过大小上限（原始响应仅记录上限以内部分）"
     elif isinstance(exc, asyncio.TimeoutError):
-        reason = "请求超时（连接或读取响应超时）"
+        reason = "请求超时"
     elif isinstance(exc, aiohttp.ClientConnectorCertificateError):
         reason = "TLS 证书验证失败"
     elif isinstance(exc, aiohttp.ClientSSLError):
